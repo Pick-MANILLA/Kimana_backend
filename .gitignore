@@ -1,0 +1,20 @@
+# dependencies / build output
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# local runtime
+.storage/
+.env
+.env.local
+.env.*.local
+*.log
+
+# planning / working docs (kept out of the repo by request)
+docs/
+
+# editor / OS
+.DS_Store
+.idea/
+.vscode/

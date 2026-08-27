@@ -1,0 +1,21 @@
+# Local dependencies for the P1 slice. Only Postgres today; a MinIO service
+# slots in here when the DocumentStore moves off the filesystem.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: kimana
+      POSTGRES_PASSWORD: kimana
+      POSTGRES_DB: kimana
+    ports:
+      - "5432:5432"
+    volumes:
+      - kimana_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kimana"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  kimana_pgdata:
