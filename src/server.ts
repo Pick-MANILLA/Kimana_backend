@@ -10,6 +10,7 @@ import { onboardingRoutes } from './domain/onboarding/routes';
 import { dashboardRoutes } from './domain/dashboard/routes';
 import { fxRoutes } from './domain/fx/routes';
 import { recipientRoutes } from './domain/recipients/routes';
+import { quoteRoutes } from './domain/quote/routes';
 
 export async function buildServer(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -33,6 +34,7 @@ export async function buildServer(): Promise<FastifyInstance> {
     await api.register(dashboardRoutes);
     await api.register(fxRoutes);
     await api.register(recipientRoutes);
+    await api.register(quoteRoutes);
   });
 
   return app;

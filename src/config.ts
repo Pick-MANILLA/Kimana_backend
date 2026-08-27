@@ -19,6 +19,9 @@ export const config = {
    * Tests force it to 0.
    */
   kybCheckDelayMs: runningTests ? 0 : Number(process.env.KYB_CHECK_DELAY_MS ?? 600),
+
+  /** Firm-quote lifetime. FirmQuote.expiresAt = issuedAt + this. */
+  quoteTtlSeconds: Number(process.env.QUOTE_TTL_SECONDS ?? 90),
 } as const;
 
 export const isTest = runningTests;
