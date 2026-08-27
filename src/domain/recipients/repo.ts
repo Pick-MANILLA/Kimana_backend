@@ -1,6 +1,7 @@
 import type { PoolClient } from 'pg';
 import { query } from '../../db/pool';
 import type { CurrencyCode, Recipient } from '../../contract';
+import { isUuid } from '../../util/ids';
 
 interface RecipientRow {
   id: string;
@@ -42,6 +43,7 @@ export async function listByCustomer(customerId: string): Promise<Recipient[]> {
 }
 
 export async function findById(id: string, customerId: string): Promise<Recipient | null> {
+  if (!isUuid(id)) return null;
   const { rows } = await query<RecipientRow>(
     `select ${COLUMNS} from recipients where id = $1 and customer_id = $2`,
     [id, customerId],

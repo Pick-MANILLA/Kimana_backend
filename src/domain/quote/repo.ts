@@ -1,6 +1,7 @@
 import type { PoolClient } from 'pg';
 import { query } from '../../db/pool';
 import type { CurrencyCode, FirmQuote } from '../../contract';
+import { isUuid } from '../../util/ids';
 
 interface QuoteRow {
   id: string;
@@ -82,6 +83,7 @@ export async function findById(
   id: string,
   client?: PoolClient,
 ): Promise<StoredQuote | null> {
+  if (!isUuid(id)) return null;
   const run = client
     ? client.query.bind(client)
     : (text: string, params: unknown[]) => query<QuoteRow>(text, params);

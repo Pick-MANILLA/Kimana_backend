@@ -12,6 +12,7 @@ import {
   DEMO_RECIPIENT_ROTTERDAM,
   DEMO_USER_ID,
 } from './ids';
+import { seedTransfers } from './transfers';
 
 /**
  * Mirrors Kimana_frontend/src/api/mock/seed.ts `createMockStore()`:
@@ -50,9 +51,9 @@ export async function seed(): Promise<void> {
     // Dev reset. audit_log / ledger_entries are append-only in normal operation;
     // TRUNCATE bypasses the row triggers and is fine for a local reseed.
     await c.query(`
-      truncate audit_log, ledger_entries, quotes, recipients, fx_rates, kyb_checks,
-               onboarding_documents, onboarding_principals, onboarding_applications,
-               accounts, customers, users
+      truncate audit_log, ledger_entries, transfer_state_history, transfers, quotes,
+               recipients, fx_rates, kyb_checks, onboarding_documents,
+               onboarding_principals, onboarding_applications, accounts, customers, users
       restart identity cascade
     `);
 
@@ -101,6 +102,8 @@ export async function seed(): Promise<void> {
         [id, DEMO_CUSTOMER_ID, accountName, currency, country],
       );
     }
+
+    await seedTransfers(c);
   });
 }
 

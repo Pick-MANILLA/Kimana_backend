@@ -1,9 +1,4 @@
-import type {
-  BalanceHighlight,
-  DashboardStats,
-  PendingAction,
-  WorkingCapitalOffer,
-} from '../../contract';
+import type { BalanceHighlight, PendingAction, WorkingCapitalOffer } from '../../contract';
 
 /**
  * Dashboard content that has no real source in the P1 slice. Values match
@@ -21,9 +16,9 @@ export const balanceHighlights: readonly BalanceHighlight[] = [
   { currency: 'EUR', secondaryLine: '≈ USD 19,760', deltaText: 'TXN-8842 in progress', deltaTone: 'warning' },
 ];
 
-export const stats: DashboardStats = {
-  volume30d: { amountMinor: 16_350_000, currency: 'USD' },
-  transfersInProgress: 2,
+// volume30d and transfersInProgress are now computed from the transfers table;
+// these two still have no source.
+export const staticStats = {
   payoutSuccessRatePercent: 98.3,
   avgSettlementSeconds: 402,
 };
