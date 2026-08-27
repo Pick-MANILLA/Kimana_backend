@@ -28,8 +28,8 @@ export async function seed(): Promise<void> {
     // Dev reset. audit_log is append-only in normal operation; TRUNCATE
     // bypasses the row trigger and is fine for a local reseed.
     await c.query(`
-      truncate audit_log, ledger_entries, onboarding_documents, onboarding_principals,
-               onboarding_applications, accounts, customers, users
+      truncate audit_log, ledger_entries, kyb_checks, onboarding_documents,
+               onboarding_principals, onboarding_applications, accounts, customers, users
       restart identity cascade
     `);
 

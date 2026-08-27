@@ -280,10 +280,18 @@ export interface StatusPatch {
   status: OnboardingStatus;
   submittedAt?: boolean;
   reviewedAt?: boolean;
+  /** Always written: pass the summary to set it, omit to clear it. */
   approvedSummary?: ApprovedAccountSummary;
+  /** Always written: pass reasons to set them, omit to clear them. */
   rejectionReasons?: readonly RejectionDetail[];
 }
 
+/**
+ * Authoritative status write. `approved_summary` and `rejection_reasons` are
+ * set to exactly what the patch carries (omitted => NULL), so a resubmit after
+ * a rejection clears the stale reasons and vice versa. Only `submit` calls
+ * this, and it always passes the complete intended picture.
+ */
 export async function patchStatus(
   client: PoolClient,
   applicationId: string,
@@ -294,8 +302,8 @@ export async function patchStatus(
         set status = $2,
             submitted_at = case when $3::boolean then now() else submitted_at end,
             reviewed_at = case when $4::boolean then now() else reviewed_at end,
-            approved_summary = coalesce($5::jsonb, approved_summary),
-            rejection_reasons = coalesce($6::jsonb, rejection_reasons),
+            approved_summary = $5::jsonb,
+            rejection_reasons = $6::jsonb,
             updated_at = now()
       where id = $1`,
     [
@@ -304,7 +312,24 @@ export async function patchStatus(
       patch.submittedAt ?? false,
       patch.reviewedAt ?? false,
       patch.approvedSummary ? JSON.stringify(patch.approvedSummary) : null,
-      patch.rejectionReasons ? JSON.stringify(patch.rejectionReasons) : null,
+      patch.rejectionReasons && patch.rejectionReasons.length
+        ? JSON.stringify(patch.rejectionReasons)
+        : null,
     ],
   );
+}
+
+export async function replaceKybChecks(
+  client: PoolClient,
+  applicationId: string,
+  checks: ReadonlyArray<{ key: string; passed: boolean; detail?: string }>,
+): Promise<void> {
+  await client.query(`delete from kyb_checks where application_id = $1`, [applicationId]);
+  for (const check of checks) {
+    await client.query(
+      `insert into kyb_checks (application_id, check_key, passed, detail)
+       values ($1, $2, $3, $4)`,
+      [applicationId, check.key, check.passed, check.detail ?? null],
+    );
+  }
 }

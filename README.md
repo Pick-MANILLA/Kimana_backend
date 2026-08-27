@@ -43,7 +43,7 @@ npm run typecheck
 | POST | `/onboarding/application/documents` | multipart: `type`, `file` |
 | POST | `/onboarding/application/documents/:id/retry` | |
 | DELETE | `/onboarding/application/documents/:id` | 204 |
-| POST | `/onboarding/application/submit` | synchronous approve for the slice |
+| POST | `/onboarding/application/submit` | walks `draft→submitted→in_review`, runs the KYB provider, lands on `approved` or `rejected` |
 | GET | `/dashboard/overview` | balances summed from `ledger_entries`; stats/actions seeded |
 
 Errors are `{ code, message, retryable }` with the status mapping in
@@ -62,7 +62,7 @@ src/
   money/               server-side Money helpers
   storage/             DocumentStore (filesystem impl; MinIO/S3 later)
   domain/
-    onboarding/        schemas · repo · service · routes
+    onboarding/        schemas · repo · service · routes · kyb/ (provider + stub)
     dashboard/         service · routes · placeholder content
     ledger/            balance reads
   seed/                demo tenant, mirrors the frontend mock store
@@ -75,11 +75,29 @@ integration/           drop-in live client + wiring notes for Kimana_frontend
 See [`integration/README.md`](integration/README.md) — copy one file into
 `Kimana_frontend`, flip `src/api/index.ts`, set `VITE_API_URL`.
 
+## KYB (onboarding `submit`)
+
+`submit` moves the application through `submitted → in_review`, runs
+`kybProvider.runChecks()`, then commits `approved` (+ `approvedSummary`) or
+`rejected` (+ `rejectionReasons`). Per-check results land in `kyb_checks`.
+
+The request stays open until a terminal status — matching the contract and the
+frontend, which doesn't poll. The active provider is a **stub**
+(`src/domain/onboarding/kyb/stubProvider.ts`): everything passes unless the data
+trips a documented trigger — legal name containing `REJECT` (CAC), a principal
+BVN of `00000000000` (NIBSS), a principal name containing `SANCTION`. Swap
+`kyb/index.ts` for a real provider. `KYB_CHECK_DELAY_MS` tunes the simulated
+latency (0 in tests).
+
+> The frontend has no `rejected` screen yet — `VerificationPage` navigates to
+> `/onboarding/approved` on any resolved submit, so a rejection currently shows
+> as a stuck "Loading your account…". Building that screen is frontend work.
+
 ## Known gaps (tracked in docs/backend-plan.md)
 
-- Onboarding `submit` approves synchronously and always succeeds — async KYB and
-  the `rejected` path are next.
 - Auth is a single seeded session; no login yet.
 - `src/contract` is a vendored copy, not a shared `@kimana/contract` package.
+- KYB runs inside the request; a minutes-long real provider would want
+  submit + webhook/poll instead.
 - Dev-only `npm audit` findings in the vitest/vite/esbuild chain (dev server
   SSRF); not in the runtime dependency tree.

@@ -1,3 +1,4 @@
+import type { PoolClient } from 'pg';
 import { withTx } from '../../db/pool';
 import { ApiError } from '../../errors';
 import { writeAudit } from '../../audit/writeAudit';
@@ -12,6 +13,7 @@ import type {
 import type { RequestSession } from '../../http/auth';
 import type { BusinessDetailsInput, PrincipalInput } from './schemas';
 import * as repo from './repo';
+import { kybProvider } from './kyb';
 
 const ALLOWED_MIME_TYPES = new Set(['application/pdf', 'image/jpeg', 'image/png']);
 const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024;
@@ -215,9 +217,34 @@ export async function removeDocument(
 /**
  * Slice: synchronous KYB that always approves. Walks the real status chain
  * (draft -> submitted -> in_review -> approved), writing an audit row per
- * transition, then populates approvedSummary. Async checks + the rejected
- * path are P1-later (docs/backend-plan.md §03 P1).
+ * transition, runs the KYB provider, then lands on `approved` (with
+ * approvedSummary) or `rejected` (with rejectionReasons). The stub provider
+ * always approves unless the data trips a documented trigger — see
+ * kyb/stubProvider.ts.
+ *
+ * The HTTP request stays open until a terminal status is reached, matching the
+ * contract ("resolves once checks complete with the final status") and the
+ * frontend, which does not poll. A real provider that runs for minutes would
+ * want this split into submit + webhook/poll — see docs/backend-plan.md §03.
  */
+async function auditStateChange(
+  client: PoolClient,
+  session: RequestSession,
+  applicationId: string,
+  from: string,
+  to: string,
+): Promise<void> {
+  await writeAudit(client, {
+    actorId: session.userId,
+    actorRole: session.role,
+    action: 'onboarding.state_change',
+    entityType: 'onboarding_application',
+    entityId: applicationId,
+    before: { status: from },
+    after: { status: to },
+  });
+}
+
 export async function submit(
   session: RequestSession,
   applicationId?: string,
@@ -227,40 +254,47 @@ export async function submit(
   if (!application.business) {
     throw ApiError.validation('Add your business details before submitting.');
   }
+  if (application.status === 'submitted' || application.status === 'in_review') {
+    throw ApiError.conflict('This application is already being reviewed.');
+  }
 
-  const business = application.business;
-  const summary: ApprovedAccountSummary = {
-    accountId: generateAccountId(business.legalName),
-    riskRatingLabel: 'Medium-Low',
-    segment: INDUSTRY_SEGMENT_LABEL[business.industry] ?? 'Trading Business',
-    corridor: 'NGN → USD / EUR',
-    monthlyLimit: { amountMinor: 100_000_00, currency: 'USD' },
-  };
+  // draft -> submitted -> in_review, committed before the checks run so a
+  // concurrent getApplication sees in_review.
+  await withTx(async (client) => {
+    await repo.patchStatus(client, application.id, { status: 'submitted', submittedAt: true });
+    await auditStateChange(client, session, application.id, application.status, 'submitted');
+    await repo.patchStatus(client, application.id, { status: 'in_review' });
+    await auditStateChange(client, session, application.id, 'submitted', 'in_review');
+  });
+
+  const outcome = await kybProvider.runChecks(application);
 
   return withTx(async (client) => {
-    const audit = (action: string, from: string, to: string) =>
-      writeAudit(client, {
-        actorId: session.userId,
-        actorRole: session.role,
-        action,
-        entityType: 'onboarding_application',
-        entityId: application.id,
-        before: { status: from },
-        after: { status: to },
+    await repo.replaceKybChecks(client, application.id, outcome.checks);
+
+    if (outcome.approved) {
+      const business = application.business!;
+      const summary: ApprovedAccountSummary = {
+        accountId: generateAccountId(business.legalName),
+        riskRatingLabel: 'Medium-Low',
+        segment: INDUSTRY_SEGMENT_LABEL[business.industry] ?? 'Trading Business',
+        corridor: 'NGN → USD / EUR',
+        monthlyLimit: { amountMinor: 100_000_00, currency: 'USD' },
+      };
+      await repo.patchStatus(client, application.id, {
+        status: 'approved',
+        reviewedAt: true,
+        approvedSummary: summary,
       });
-
-    await repo.patchStatus(client, application.id, { status: 'submitted', submittedAt: true });
-    await audit('onboarding.state_change', 'draft', 'submitted');
-
-    await repo.patchStatus(client, application.id, { status: 'in_review' });
-    await audit('onboarding.state_change', 'submitted', 'in_review');
-
-    await repo.patchStatus(client, application.id, {
-      status: 'approved',
-      reviewedAt: true,
-      approvedSummary: summary,
-    });
-    await audit('onboarding.state_change', 'in_review', 'approved');
+      await auditStateChange(client, session, application.id, 'in_review', 'approved');
+    } else {
+      await repo.patchStatus(client, application.id, {
+        status: 'rejected',
+        reviewedAt: true,
+        rejectionReasons: outcome.rejectionReasons,
+      });
+      await auditStateChange(client, session, application.id, 'in_review', 'rejected');
+    }
 
     return repo.reloadApplication(client, application.id);
   });
