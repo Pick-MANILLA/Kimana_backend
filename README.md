@@ -4,9 +4,10 @@ Backend for Kimana, implementing the typed `ApiClient` contract that
 `Kimana_frontend` already defined and runs against. Full plan and rationale:
 [`docs/backend-plan.md`](docs/backend-plan.md).
 
-**Status: P1 slice.** Auth session, the onboarding wizard, and the dashboard
-overview are served for real; everything else (transfers, quotes, ledger
-postings, screening, trade documents, all `/ops`) is still ahead — see the plan.
+**Status: P1 + P2.** Auth session, the onboarding wizard, the dashboard
+overview, indicative FX, recipients, firm quotes, and the full transfer
+lifecycle (state machine + ledger postings) are served for real. Still ahead:
+trade documents, customer screening view, all `/ops` — see the plan.
 
 ## Stack
 
@@ -31,7 +32,7 @@ npm run build                  # tsc -> dist/
 npm run typecheck
 ```
 
-## Endpoints (this slice)
+## Endpoints
 
 | Method | Path | |
 |---|---|---|
@@ -44,7 +45,12 @@ npm run typecheck
 | POST | `/onboarding/application/documents/:id/retry` | |
 | DELETE | `/onboarding/application/documents/:id` | 204 |
 | POST | `/onboarding/application/submit` | walks `draft→submitted→in_review`, runs the KYB provider, lands on `approved` or `rejected` |
-| GET | `/dashboard/overview` | balances summed from `ledger_entries`; stats/actions seeded |
+| GET | `/dashboard/overview` | balances from `ledger_entries`; in-progress count + USD 30d volume computed from transfers |
+| GET | `/rates/indicative?send=&receive=` | drifting stub rate |
+| GET | `/recipients` · POST `/recipients/validate` · POST `/recipients` | |
+| POST | `/quotes` | firm quote, `expiresAt = issuedAt + 90s` |
+| POST | `/transfers` | idempotent (`Idempotency-Key` header or body); parks at `AWAITING_FUNDS` |
+| GET | `/transfers` · `/transfers/:id` · `/transfers/:id/timeline` | `?status=` filter on the list |
 
 Errors are `{ code, message, retryable }` with the status mapping in
 `docs/backend-plan.md` §02.
@@ -64,7 +70,11 @@ src/
   domain/
     onboarding/        schemas · repo · service · routes · kyb/ (provider + stub)
     dashboard/         service · routes · placeholder content
-    ledger/            balance reads
+    fx/                indicative rates (FxProvider stub)
+    recipients/        list / validate (name-resolver stub) / save
+    quote/             firm quotes
+    transfers/         createTransfer · reads · stateMachine · engine
+    ledger/            balance reads · postEntry (running-balance under a lock)
   seed/                demo tenant, mirrors the frontend mock store
 test/                  vitest integration tests (app.inject + real Postgres)
 integration/           drop-in live client + wiring notes for Kimana_frontend
@@ -93,11 +103,41 @@ latency (0 in tests).
 > `/onboarding/approved` on any resolved submit, so a rejection currently shows
 > as a stuck "Loading your account…". Building that screen is frontend work.
 
+## Transfer lifecycle
+
+`createTransfer` snapshots the quote (rejecting an expired one with
+`RATE_EXPIRED`), then runs the internal checks inline and parks the transfer at
+`AWAITING_FUNDS` with a funding reference. `TRANSFER_AUTO_ADVANCE_MS` later
+simulates the collection-partner "funds received" webhook plus the
+settlement/payout pipeline, driving it to `COMPLETED` (`-1` disables; tests
+call the engine directly).
+
+`src/domain/transfers/stateMachine.ts` holds the explicit transition table —
+every state change goes through `assertTransition`. `engine.ts` applies one
+transition per transaction (history row + audit + ledger postings together).
+
+**Ledger model** (customer-account-centric FX-through payment):
+
+| Transition | Posting |
+|---|---|
+| `→ FUNDED` | `-sendAmount` from the send-currency account (rejects `INSUFFICIENT_FUNDS` if short) |
+| `→ SETTLED` | `+receiveAmount` to the receive-currency account |
+| `→ COMPLETED` | `-receiveAmount` from the receive-currency account (paid to the beneficiary) |
+| `→ REVERSED` | `+sendAmount` back to the send account, linked via `reversal_of_entry_id` |
+
+`running_balance_minor` is computed under an account row lock so concurrent
+postings serialise.
+
 ## Known gaps (tracked in docs/backend-plan.md)
 
 - Auth is a single seeded session; no login yet.
 - `src/contract` is a vendored copy, not a shared `@kimana/contract` package.
 - KYB runs inside the request; a minutes-long real provider would want
   submit + webhook/poll instead.
+- Transfer progression is an in-process `setTimeout`; a process restart between
+  `AWAITING_FUNDS` and `COMPLETED` leaves the transfer parked (no resume sweep).
+- Screening always clears (`hold: false`) — the ops decision path is P3/P4.
+- `payoutSuccessRatePercent` / `avgSettlementSeconds` on the dashboard are still
+  placeholder (need settlement-timing data).
 - Dev-only `npm audit` findings in the vitest/vite/esbuild chain (dev server
   SSRF); not in the runtime dependency tree.

@@ -22,6 +22,15 @@ export const config = {
 
   /** Firm-quote lifetime. FirmQuote.expiresAt = issuedAt + this. */
   quoteTtlSeconds: Number(process.env.QUOTE_TTL_SECONDS ?? 90),
+
+  /**
+   * Simulated transfer progression. After createTransfer parks a transfer at
+   * AWAITING_FUNDS, this is the delay before the simulated funding + settlement
+   * + payout runs. -1 disables auto-advance entirely (tests drive the engine).
+   */
+  transferAutoAdvanceMs: runningTests ? -1 : Number(process.env.TRANSFER_AUTO_ADVANCE_MS ?? 2500),
+  /** Pause between simulated steps once progression starts. */
+  transferStepDelayMs: runningTests ? 0 : Number(process.env.TRANSFER_STEP_DELAY_MS ?? 700),
 } as const;
 
 export const isTest = runningTests;

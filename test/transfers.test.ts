@@ -37,7 +37,7 @@ async function freshQuote() {
 const create = (payload: unknown) =>
   app.inject({ method: 'POST', url: '/transfers', payload });
 
-test('createTransfer snapshots the quote and starts at CREATED', async () => {
+test('createTransfer snapshots the quote and parks at AWAITING_FUNDS', async () => {
   const quote = await freshQuote();
   const res = await create({
     idempotencyKey: 'idem-key-0001',
@@ -47,10 +47,20 @@ test('createTransfer snapshots the quote and starts at CREATED', async () => {
   expect(res.statusCode).toBe(201);
   const t = res.json();
   expect(t.reference).toMatch(/^KM-[A-Z0-9]{6}$/);
-  expect(t.state.status).toBe('CREATED');
+  expect(t.state.status).toBe('AWAITING_FUNDS');
+  expect(t.state.fundingReference).toMatch(/^FR-[A-Z0-9]{6}$/);
   expect(t.sendAmount).toEqual({ amountMinor: 4_500_000, currency: 'USD' });
   expect(t.quote.id).toBe(quote.id);
   expect(t.quote.breakdown.rate).toBe(1645.2);
+
+  const timeline = await app.inject({ method: 'GET', url: `/transfers/${t.id}/timeline` });
+  expect(timeline.json().history.map((h: { status: string }) => h.status)).toEqual([
+    'CREATED',
+    'QUOTED',
+    'SCREENED',
+    'AWAITING_FUNDS',
+  ]);
+  expect(timeline.json().isTerminal).toBe(false);
 });
 
 test('replaying the same idempotency key returns the same transfer', async () => {

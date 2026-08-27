@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { config } from '../../config';
 import { withTx } from '../../db/pool';
 import { ApiError } from '../../errors';
 import { writeAudit } from '../../audit/writeAudit';
@@ -8,6 +9,7 @@ import * as quoteRepo from '../quote/repo';
 import * as recipientRepo from '../recipients/repo';
 import * as repo from './repo';
 import { generateReference } from './reference';
+import { advanceToAwaitingFunds, advanceToCompletion } from './engine';
 
 export const createTransferSchema = z.object({
   idempotencyKey: z.string().trim().min(8, 'Provide a stable idempotency key.'),
@@ -109,9 +111,30 @@ export async function createTransfer(
     throw new ApiError('CONFLICT', 'Could not create the transfer. Try again.', true);
   }
 
+  // Internal checks (quote lock-in, screening) run inline and park the
+  // transfer at AWAITING_FUNDS.
+  await advanceToAwaitingFunds(transferId);
+  scheduleSimulatedProgression(transferId);
+
   const created = await repo.findById(transferId);
   if (!created) throw new ApiError('SERVER_ERROR', 'Transfer vanished after creation.', true);
   return created;
+}
+
+/**
+ * Stands in for a collection-partner "funds received" webhook plus the
+ * settlement/payout pipeline. -1 disables it (tests drive the engine directly).
+ * A process restart between AWAITING_FUNDS and COMPLETED leaves the transfer
+ * parked — a real system would resume from a durable queue.
+ */
+function scheduleSimulatedProgression(transferId: string): void {
+  if (config.transferAutoAdvanceMs < 0) return;
+  const timer = setTimeout(() => {
+    void advanceToCompletion(transferId, { stepDelayMs: config.transferStepDelayMs }).catch(() => {
+      // best-effort simulation; real errors surface via audit + status
+    });
+  }, config.transferAutoAdvanceMs);
+  timer.unref?.();
 }
 
 export async function getTransfer(session: RequestSession, id: string): Promise<Transfer> {
