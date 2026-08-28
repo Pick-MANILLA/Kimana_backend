@@ -1,0 +1,18 @@
+//! Fixed identifiers for the single seeded demo tenant. The session extractor
+//! resolves the session from `DEMO_USER_ID` until real login lands.
+
+use uuid::{uuid, Uuid};
+
+pub const DEMO_USER_ID: Uuid = uuid!("00000000-0000-4000-8000-000000000001");
+pub const DEMO_CUSTOMER_ID: Uuid = uuid!("00000000-0000-4000-8000-000000000002");
+pub const DEMO_APPLICATION_ID: Uuid = uuid!("00000000-0000-4000-8000-000000000003");
+
+pub const DEMO_ACCOUNT_NGN: Uuid = uuid!("00000000-0000-4000-8000-000000000010");
+pub const DEMO_ACCOUNT_USD: Uuid = uuid!("00000000-0000-4000-8000-000000000011");
+pub const DEMO_ACCOUNT_EUR: Uuid = uuid!("00000000-0000-4000-8000-000000000012");
+
+pub const DEMO_RECIPIENT_AMSTERDAM: Uuid = uuid!("00000000-0000-4000-8000-000000000020");
+pub const DEMO_RECIPIENT_KERALA: Uuid = uuid!("00000000-0000-4000-8000-000000000021");
+pub const DEMO_RECIPIENT_NATURALIA: Uuid = uuid!("00000000-0000-4000-8000-000000000022");
+pub const DEMO_RECIPIENT_ROTTERDAM: Uuid = uuid!("00000000-0000-4000-8000-000000000023");
+pub const DEMO_RECIPIENT_GUPTA: Uuid = uuid!("00000000-0000-4000-8000-000000000024");

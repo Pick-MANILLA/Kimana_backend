@@ -12,10 +12,13 @@ Copy [`live-api-client.ts`](./live-api-client.ts) to:
 Kimana_frontend/src/api/live/client.ts
 ```
 
-It implements the slice endpoints (auth, onboarding, dashboard) over HTTP and
-**delegates every other method to the existing mock** via `...mockApiClient`.
-So the transfer table, recipients, and FX panel keep working against seeded
-mock data until P2 replaces them.
+It implements the P1 + P2 endpoints (auth, onboarding, dashboard, fx,
+recipients, quote, transfers) over HTTP and **delegates every not-yet-built
+method to the existing mock** via `...mockApiClient` — so trade documents,
+screening, delays, and all ops keep working against seeded mock data.
+
+The backend is Rust (axum); the wire contract is plain HTTP/JSON, so this file
+is unaffected by the language.
 
 ## 2. Flip the switch
 
@@ -49,15 +52,15 @@ VITE_API_URL=http://localhost:4000
 
 ```
 # terminal 1 — this repo
-docker compose up -d && npm run seed && npm run dev      # :4000
+docker compose up -d && cargo run --bin seed && cargo run     # :4000
 
 # terminal 2 — Kimana_frontend
-npm run dev                                              # :5173
+npm run dev                                                   # :5173
 ```
 
 Then walk `/onboarding/business-details` → `/onboarding/approved` and land on
-`/dashboard`. The onboarding wizard and the dashboard header, balances, stats,
-and pending actions are now served by `Kimana_backend`; every onboarding
+`/dashboard`. The onboarding wizard, dashboard, FX panel, recipient lookup,
+quotes, and transfer list/detail are now served by `Kimana_backend`; every
 mutation writes an `audit_log` row.
 
 ## Notes

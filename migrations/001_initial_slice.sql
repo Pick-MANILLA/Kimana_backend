@@ -58,7 +58,7 @@ create table onboarding_principals (
   position              int not null,
   full_name             text not null,
   role                  text not null check (role in ('director', 'beneficial_owner', 'both')),
-  ownership_percentage  numeric,
+  ownership_percentage  double precision,
   date_of_birth         date,
   bvn                   text,
   nin                   text

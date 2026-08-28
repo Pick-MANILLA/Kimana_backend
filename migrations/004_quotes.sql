@@ -7,7 +7,7 @@ create table quotes (
   customer_id           uuid not null references customers (id),
   send_currency         text not null,
   receive_currency      text not null,
-  rate                  numeric not null,
+  rate                  double precision not null,
   fee_minor             bigint not null,
   send_amount_minor     bigint not null,
   receive_amount_minor  bigint not null,

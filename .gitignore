@@ -1,14 +1,10 @@
-# dependencies / build output
-node_modules/
-dist/
-coverage/
-*.tsbuildinfo
+# Rust
+/target/
 
 # local runtime
 .storage/
 .env
 .env.local
-.env.*.local
 *.log
 
 # planning / working docs (kept out of the repo by request)

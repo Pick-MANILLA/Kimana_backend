@@ -4,21 +4,35 @@
 //  Place at:  Kimana_frontend/src/api/live/client.ts
 //  Then edit  Kimana_frontend/src/api/index.ts  (see integration/README.md).
 //
-//  It implements the P1 slice endpoints (auth, onboarding, dashboard) against
-//  the real backend over HTTP, and delegates every not-yet-built method to the
-//  existing mock. As each later phase ships, move those methods off `mock` and
-//  onto `http`.
+//  It implements the P1 + P2 endpoints (auth, onboarding, dashboard, fx,
+//  recipients, quote, transfers) against the real backend over HTTP, and
+//  delegates every not-yet-built method (trade documents, screening, delays,
+//  all ops) to the existing mock. As each later phase ships, move those methods
+//  off `mock` and onto `http`.
+//
+//  The backend is Rust (axum), but the wire contract is plain HTTP/JSON — this
+//  client is unchanged by the language.
 // ============================================================================
 
 import type { ApiClient } from '../contract';
 import type {
   BusinessDetails,
+  CurrencyCode,
   DirectorOrBeneficialOwner,
   DocumentFileInput,
+  FirmQuote,
   Id,
+  IndicativeRate,
+  NewRecipientInput,
   OnboardingApplication,
+  Recipient,
+  RequestFirmQuoteInput,
+  Transfer,
+  TransferStatus,
+  TransferTimeline,
   UploadedDocument,
 } from '../types';
+import type { CreateTransferInput } from '../types/transfer';
 import { mockApiClient } from '../mock';
 
 const BASE_URL =
@@ -59,13 +73,21 @@ async function parseOrThrow(res: Response): Promise<unknown> {
   return json;
 }
 
-async function http<T>(method: string, path: string, body?: unknown): Promise<T> {
+async function http<T>(
+  method: string,
+  path: string,
+  body?: unknown,
+  extraHeaders?: Record<string, string>,
+): Promise<T> {
   let res: Response;
   try {
     res = await fetch(`${BASE_URL}${path}`, {
       method,
       credentials: 'include',
-      headers: body === undefined ? undefined : { 'content-type': 'application/json' },
+      headers: {
+        ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+        ...extraHeaders,
+      },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
   } catch {
@@ -156,6 +178,39 @@ export function createLiveApiClient(): ApiClient {
 
     dashboard: {
       getOverview: (_customerId: Id) => http('GET', '/dashboard/overview'),
+    },
+
+    quote: {
+      getIndicativeRate: (sendCurrency: CurrencyCode, receiveCurrency: CurrencyCode) =>
+        http<IndicativeRate>(
+          'GET',
+          `/rates/indicative?send=${sendCurrency}&receive=${receiveCurrency}`,
+        ),
+      requestFirmQuote: (input: RequestFirmQuoteInput) =>
+        http<FirmQuote>('POST', '/quotes', input),
+    },
+
+    recipients: {
+      listRecipients: (_customerId: Id) => http<readonly Recipient[]>('GET', '/recipients'),
+      validateBankAccount: (input: NewRecipientInput) =>
+        http<{ accountName: string }>('POST', '/recipients/validate', input),
+      saveRecipient: (input: NewRecipientInput & { accountName: string }) =>
+        http<Recipient>('POST', '/recipients', input),
+    },
+
+    transfers: {
+      createTransfer: (input: CreateTransferInput) =>
+        http<Transfer>('POST', '/transfers', input, {
+          'idempotency-key': input.idempotencyKey,
+        }),
+      getTransfer: (id: Id) => http<Transfer>('GET', `/transfers/${encodeURIComponent(id)}`),
+      getTimeline: (id: Id) =>
+        http<TransferTimeline>('GET', `/transfers/${encodeURIComponent(id)}/timeline`),
+      listTransfers: (_customerId: Id, filter?: { status?: TransferStatus }) =>
+        http<readonly Transfer[]>(
+          'GET',
+          `/transfers${filter?.status ? `?status=${filter.status}` : ''}`,
+        ),
     },
   };
 }

@@ -4,8 +4,8 @@
 -- jitter), mirroring the frontend mock; a real feed would overwrite it.
 create table fx_rates (
   pair                text primary key,          -- e.g. "USD/NGN"
-  rate                numeric not null,
-  change_percent_24h  numeric not null,
+  rate                double precision not null,
+  change_percent_24h  double precision not null,
   as_of               timestamptz not null default now()
 );
 
