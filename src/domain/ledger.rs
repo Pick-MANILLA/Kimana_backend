@@ -5,7 +5,7 @@ use crate::contract::ledger::AccountBalance;
 use crate::error::ApiResult;
 use crate::util::iso;
 use chrono::Utc;
-use sqlx::PgPool;
+use sqlx::{PgConnection, PgPool};
 use uuid::Uuid;
 
 #[derive(sqlx::FromRow)]
@@ -83,6 +83,78 @@ pub async fn account_balance_minor(
     .fetch_one(&mut *conn)
     .await?;
     Ok(balance)
+}
+
+/// Statuses that no longer count against an exposure limit.
+const TERMINAL_STATUSES: &str = "('COMPLETED', 'REJECTED', 'EXPIRED', 'REVERSED')";
+
+/// Sum of a customer's non-terminal transfer amounts in one currency.
+/// This is the per-customer side of Business Rule #7's exposure ceiling.
+pub async fn customer_open_exposure_minor(
+    conn: &mut PgConnection,
+    customer_id: Uuid,
+    currency: CurrencyCode,
+) -> ApiResult<i64> {
+    let sum: i64 = sqlx::query_scalar(&format!(
+        "select coalesce(sum(send_amount_minor), 0)::bigint
+           from transfers
+          where customer_id = $1
+            and send_currency = $2
+            and current_status not in {TERMINAL_STATUSES}"
+    ))
+    .bind(customer_id)
+    .bind(currency.as_str())
+    .fetch_one(conn)
+    .await?;
+    return Ok(sum);
+}
+
+/// A customer's own exposure ceilings; `None` falls back to the config default.
+pub struct CustomerLimits {
+    pub max_transfer_amount_minor: Option<i64>,
+    pub max_aggregate_exposure_minor: Option<i64>,
+}
+
+/// Reads the customer's limits under a row lock. The lock is held until the
+/// surrounding transaction ends, so concurrent transfer creates for the same
+/// customer serialize and each sees the other's committed exposure.
+pub async fn lock_customer_limits(
+    conn: &mut PgConnection,
+    customer_id: Uuid,
+) -> ApiResult<CustomerLimits> {
+    let (max_transfer_amount_minor, max_aggregate_exposure_minor): (Option<i64>, Option<i64>) =
+        sqlx::query_as(
+            "select max_transfer_amount_minor, max_aggregate_exposure_minor
+               from customers
+              where id = $1
+                for update",
+        )
+        .bind(customer_id)
+        .fetch_one(conn)
+        .await?;
+    return Ok(CustomerLimits {
+        max_transfer_amount_minor,
+        max_aggregate_exposure_minor,
+    });
+}
+
+/// Platform-wide non-terminal exposure per currency, for the FX-exposure
+/// guardrail. Visible for now; a hard platform-wide cap is a later refinement.
+pub async fn platform_open_exposure_by_currency(
+    conn: &mut PgConnection,
+) -> ApiResult<Vec<(CurrencyCode, i64)>> {
+    let rows: Vec<(String, i64)> = sqlx::query_as(&format!(
+        "select send_currency, coalesce(sum(send_amount_minor), 0)::bigint
+           from transfers
+          where current_status not in {TERMINAL_STATUSES}
+          group by send_currency"
+    ))
+    .fetch_all(conn)
+    .await?;
+    return rows
+        .into_iter()
+        .map(|(currency, minor)| Ok((CurrencyCode::parse(&currency)?, minor)))
+        .collect();
 }
 
 pub struct LedgerPosting<'a> {

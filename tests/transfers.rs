@@ -3,18 +3,23 @@ mod common;
 
 use axum::http::StatusCode;
 use common::TestApp;
+use kimana_backend::ids::DEMO_CUSTOMER_ID;
 use serde_json::{json, Value};
 use serial_test::file_serial;
 
 const RECIPIENT: &str = "00000000-0000-4000-8000-000000000020";
 
 async fn fresh_quote(app: &TestApp) -> Value {
+    quote_for_amount(app, 4_500_000).await
+}
+
+async fn quote_for_amount(app: &TestApp, amount_minor: i64) -> Value {
     let (_, body) = app
         .post(
             "/quotes",
             json!({
                 "sendCurrency": "USD", "receiveCurrency": "NGN",
-                "amount": { "amountMinor": 4_500_000, "currency": "USD" }, "amountField": "send"
+                "amount": { "amountMinor": amount_minor, "currency": "USD" }, "amountField": "send"
             }),
         )
         .await;
@@ -160,6 +165,112 @@ async fn timeline_of_unknown_id_is_not_found() {
         .get("/transfers/00000000-0000-4000-8000-0000000000aa")
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+#[file_serial]
+async fn transfer_within_limits_succeeds() {
+    let app = TestApp::new().await;
+    let quote = fresh_quote(&app).await;
+    let (status, t) = app
+        .post(
+            "/transfers",
+            json!({ "idempotencyKey": "idem-key-0006", "quoteId": quote["id"], "recipientId": RECIPIENT }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(t["state"]["status"], "AWAITING_FUNDS");
+}
+
+#[tokio::test]
+#[file_serial]
+async fn transfer_over_max_amount_is_rejected() {
+    let app = TestApp::new().await;
+    let quote = quote_for_amount(&app, 15_000_000).await;
+    let (status, body) = app
+        .post(
+            "/transfers",
+            json!({ "idempotencyKey": "idem-key-0007", "quoteId": quote["id"], "recipientId": RECIPIENT }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["code"], "VALIDATION");
+}
+
+#[tokio::test]
+#[file_serial]
+async fn transfer_exceeding_aggregate_exposure_is_rejected() {
+    let app = TestApp::new().await;
+
+    // Push the customer's existing (seeded) non-terminal USD exposure close
+    // to the aggregate cap, so a small new transfer tips it over while
+    // staying well under the per-transfer cap.
+    sqlx::query(
+        "update transfers set send_amount_minor = 19_500_000
+          where reference = 'TXN-8843'",
+    )
+    .execute(&app.pool)
+    .await
+    .unwrap();
+
+    let quote = quote_for_amount(&app, 600_000).await;
+    let (status, body) = app
+        .post(
+            "/transfers",
+            json!({ "idempotencyKey": "idem-key-0008", "quoteId": quote["id"], "recipientId": RECIPIENT }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["code"], "VALIDATION");
+}
+
+#[tokio::test]
+#[file_serial]
+async fn per_customer_limit_overrides_config_default() {
+    let app = TestApp::new().await;
+    sqlx::query("update customers set max_transfer_amount_minor = 1_000_000 where id = $1")
+        .bind(DEMO_CUSTOMER_ID)
+        .execute(&app.pool)
+        .await
+        .unwrap();
+
+    let quote = fresh_quote(&app).await;
+    let (status, body) = app
+        .post(
+            "/transfers",
+            json!({ "idempotencyKey": "idem-key-0009", "quoteId": quote["id"], "recipientId": RECIPIENT }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["code"], "VALIDATION");
+}
+
+#[tokio::test]
+#[file_serial]
+async fn concurrent_creates_cannot_jointly_exceed_aggregate_limit() {
+    let app = TestApp::new().await;
+    sqlx::query("update transfers set send_amount_minor = 15_000_000 where reference = 'TXN-8843'")
+        .execute(&app.pool)
+        .await
+        .unwrap();
+
+    // Each 3M transfer fits alone (15M + 3M <= 20M) but two together do not.
+    let quote_a = quote_for_amount(&app, 3_000_000).await;
+    let quote_b = quote_for_amount(&app, 3_000_000).await;
+    let (a, b) = tokio::join!(
+        app.post(
+            "/transfers",
+            json!({ "idempotencyKey": "idem-key-0010", "quoteId": quote_a["id"], "recipientId": RECIPIENT }),
+        ),
+        app.post(
+            "/transfers",
+            json!({ "idempotencyKey": "idem-key-0011", "quoteId": quote_b["id"], "recipientId": RECIPIENT }),
+        ),
+    );
+
+    let mut statuses = [a.0, b.0];
+    statuses.sort();
+    assert_eq!(statuses, [StatusCode::CREATED, StatusCode::BAD_REQUEST]);
 }
 
 #[tokio::test]
