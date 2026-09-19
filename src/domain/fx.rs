@@ -1,5 +1,12 @@
-//! Indicative FX rates. The stub reads a seeded cache and jitters it on every
-//! read (like the frontend mock); a real feed replaces `current_rate`.
+//! Indicative FX rates, sourced from two independent providers (PRD
+//! Functional Requirements §B, ISSUE-03): `PrimaryProvider` reads the seeded
+//! `fx_rates` cache and jitters it on every read (like the frontend mock);
+//! `SecondaryProvider` does the same against its own `fx_secondary_rates`
+//! cache, independently seeded and independently jittered. The customer-
+//! facing rate always comes from the primary provider — the secondary exists
+//! to compare against and catch divergence, not to be quoted from. A real
+//! second feed replaces `SecondaryProvider::get_rate`'s query without
+//! touching callers.
 
 use crate::contract::common::CurrencyCode;
 use crate::contract::quote::IndicativeRate;
@@ -13,8 +20,168 @@ use chrono::{DateTime, Utc};
 use rand::Rng;
 use serde::Deserialize;
 use sqlx::PgPool;
+use std::future::Future;
 
 const JITTER_SPREAD: f64 = 0.004;
+const SECONDARY_JITTER_SPREAD: f64 = 0.006;
+
+/// A source of FX rates. `get_rate` returns `None` when the provider has no
+/// quote for that pair at all (an unknown pair), distinct from the pair
+/// simply not diverging.
+pub trait FxProvider {
+    fn name(&self) -> &'static str;
+    fn get_rate(
+        &self,
+        pool: &PgPool,
+        pair: &str,
+    ) -> impl Future<Output = ApiResult<Option<f64>>> + Send;
+}
+
+pub struct PrimaryProvider;
+
+impl FxProvider for PrimaryProvider {
+    fn name(&self) -> &'static str {
+        "primary"
+    }
+
+    async fn get_rate(&self, pool: &PgPool, pair: &str) -> ApiResult<Option<f64>> {
+        let rate = sqlx::query_scalar("select rate from fx_rates where pair = $1")
+            .bind(pair)
+            .fetch_optional(pool)
+            .await?;
+        Ok(rate)
+    }
+}
+
+pub struct SecondaryProvider;
+
+impl FxProvider for SecondaryProvider {
+    fn name(&self) -> &'static str {
+        "secondary"
+    }
+
+    async fn get_rate(&self, pool: &PgPool, pair: &str) -> ApiResult<Option<f64>> {
+        let rate = sqlx::query_scalar("select rate from fx_secondary_rates where pair = $1")
+            .bind(pair)
+            .fetch_optional(pool)
+            .await?;
+        Ok(rate)
+    }
+}
+
+/// Nudges the secondary provider's stored rate, mirroring `current_rate`'s
+/// jitter on the primary. A no-op if the pair isn't seeded there.
+async fn jitter_secondary(pool: &PgPool, pair: &str) -> ApiResult<()> {
+    let rate: Option<f64> =
+        sqlx::query_scalar("select rate from fx_secondary_rates where pair = $1")
+            .bind(pair)
+            .fetch_optional(pool)
+            .await?;
+    let Some(rate) = rate else {
+        return Ok(());
+    };
+    let factor = 1.0 + (rand::thread_rng().gen::<f64>() - 0.5) * SECONDARY_JITTER_SPREAD;
+    let drifted = (rate * factor * 100.0).round() / 100.0;
+    sqlx::query("update fx_secondary_rates set rate = $2, as_of = now() where pair = $1")
+        .bind(pair)
+        .bind(drifted)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub struct DivergenceEvent {
+    pub pair: String,
+    pub provider_a: String,
+    pub provider_b: String,
+    pub rate_a: f64,
+    pub rate_b: f64,
+    pub divergence_percent: f64,
+    pub threshold_percent: f64,
+}
+
+/// Compares the two providers' current rates for `pair` and, if they diverge
+/// beyond `threshold_percent`, records an alert row and logs a structured
+/// warning. Returns the divergence, if both providers quote the pair.
+pub async fn check_divergence(
+    pool: &PgPool,
+    pair: &str,
+    threshold_percent: f64,
+) -> ApiResult<Option<f64>> {
+    let rate_a = PrimaryProvider.get_rate(pool, pair).await?;
+    let rate_b = SecondaryProvider.get_rate(pool, pair).await?;
+    let (Some(rate_a), Some(rate_b)) = (rate_a, rate_b) else {
+        return Ok(None);
+    };
+
+    let divergence_percent = ((rate_a - rate_b).abs() / rate_a) * 100.0;
+    if divergence_percent > threshold_percent {
+        sqlx::query(
+            "insert into fx_rate_divergence_events
+               (pair, provider_a, provider_b, rate_a, rate_b, divergence_percent, threshold_percent)
+             values ($1, $2, $3, $4, $5, $6, $7)",
+        )
+        .bind(pair)
+        .bind(PrimaryProvider.name())
+        .bind(SecondaryProvider.name())
+        .bind(rate_a)
+        .bind(rate_b)
+        .bind(divergence_percent)
+        .bind(threshold_percent)
+        .execute(pool)
+        .await?;
+        tracing::warn!(
+            pair,
+            rate_a,
+            rate_b,
+            divergence_percent,
+            threshold_percent,
+            "FX provider rates diverge beyond threshold"
+        );
+    }
+    Ok(Some(divergence_percent))
+}
+
+/// Recent divergence alerts, most recent first — the queryable record the
+/// acceptance criteria asks for, until a real alerting pipeline replaces it.
+pub async fn recent_divergence_events(
+    pool: &PgPool,
+    limit: i64,
+) -> ApiResult<Vec<DivergenceEvent>> {
+    let rows: Vec<(String, String, String, f64, f64, f64, f64)> = sqlx::query_as(
+        "select pair, provider_a, provider_b, rate_a, rate_b, divergence_percent, threshold_percent
+           from fx_rate_divergence_events
+          order by detected_at desc
+          limit $1",
+    )
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(
+            |(
+                pair,
+                provider_a,
+                provider_b,
+                rate_a,
+                rate_b,
+                divergence_percent,
+                threshold_percent,
+            )| {
+                DivergenceEvent {
+                    pair,
+                    provider_a,
+                    provider_b,
+                    rate_a,
+                    rate_b,
+                    divergence_percent,
+                    threshold_percent,
+                }
+            },
+        )
+        .collect())
+}
 
 pub fn pair_key(send: CurrencyCode, receive: CurrencyCode) -> String {
     format!("{}/{}", send.as_str(), receive.as_str())
@@ -80,6 +247,17 @@ pub async fn get_indicative_rate(
     let rate = current_rate(&state.pool, &pair, !state.config.is_test)
         .await?
         .ok_or_else(|| ApiError::validation(format!("No rate available for {pair}.")))?;
+
+    if !state.config.is_test {
+        jitter_secondary(&state.pool, &pair).await?;
+    }
+    check_divergence(
+        &state.pool,
+        &pair,
+        state.config.fx_divergence_threshold_percent,
+    )
+    .await?;
+
     Ok(IndicativeRate {
         send_currency: send,
         receive_currency: receive,

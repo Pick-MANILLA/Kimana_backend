@@ -30,6 +30,10 @@ pub struct Config {
     /// for manual review (Business Rule #1), regardless of currency.
     pub compliance_amount_threshold_minor: i64,
 
+    /// Percentage difference between the primary and secondary FX providers'
+    /// rates for a pair above which a divergence alert is recorded.
+    pub fx_divergence_threshold_percent: f64,
+
     /// True under integration tests: disables FX jitter and other nondeterminism.
     pub is_test: bool,
 }
@@ -63,6 +67,7 @@ impl Config {
             max_transfer_amount_minor: num("MAX_TRANSFER_AMOUNT_MINOR", 10_000_000),
             max_aggregate_exposure_minor: num("MAX_AGGREGATE_EXPOSURE_MINOR", 20_000_000),
             compliance_amount_threshold_minor: num("COMPLIANCE_AMOUNT_THRESHOLD_MINOR", 5_000_000),
+            fx_divergence_threshold_percent: num("FX_DIVERGENCE_THRESHOLD_PERCENT", 1.0),
             is_test: false,
         }
     }
@@ -78,6 +83,7 @@ impl Config {
             max_transfer_amount_minor: 10_000_000,
             max_aggregate_exposure_minor: 20_000_000,
             compliance_amount_threshold_minor: 5_000_000,
+            fx_divergence_threshold_percent: 1.0,
             is_test: true,
             ..Config::from_env()
         }

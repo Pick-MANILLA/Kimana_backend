@@ -151,7 +151,8 @@ pub async fn seed(pool: &PgPool) -> anyhow::Result<()> {
 
     sqlx::query(
         "truncate audit_log, ledger_entries, transfer_state_history, transfers, quotes,
-                  recipients, fx_rates, kyb_checks, onboarding_documents, onboarding_principals,
+                  recipients, fx_rates, fx_secondary_rates, fx_rate_divergence_events, kyb_checks,
+                  onboarding_documents, onboarding_principals,
                   onboarding_applications, accounts, customers, users
          restart identity cascade",
     )
@@ -205,6 +206,14 @@ pub async fn seed(pool: &PgPool) -> anyhow::Result<()> {
             .bind(pair)
             .bind(rate)
             .bind(change)
+            .execute(&mut *tx)
+            .await?;
+        // Independent second provider, seeded with a small, sub-threshold
+        // offset from the primary so a fresh seed starts with no divergence.
+        let secondary_rate = (rate * 1.0015 * 100.0).round() / 100.0;
+        sqlx::query("insert into fx_secondary_rates (pair, rate) values ($1, $2)")
+            .bind(pair)
+            .bind(secondary_rate)
             .execute(&mut *tx)
             .await?;
     }
