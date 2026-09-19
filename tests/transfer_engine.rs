@@ -112,7 +112,18 @@ async fn running_balance_tracks_cumulative_total() {
 #[file_serial]
 async fn insufficient_balance_rejects_at_funding() {
     let app = TestApp::new().await;
-    let (id, _) = create_transfer(&app, 200_000_00).await; // USD balance is 124,500.00
+    // Drain the seeded USD balance down to 5,000.00 so a transfer well under
+    // the exposure and compliance-screening thresholds still exceeds the
+    // account's real funds and is rejected at the funding step.
+    sqlx::query(
+        "insert into ledger_entries (account_id, amount_minor, currency, running_balance_minor, description)
+         values ($1, -11_950_000, 'USD', 500_000, 'test setup: drain balance')",
+    )
+    .bind(Uuid::parse_str(ACCT_USD).unwrap())
+    .execute(&app.pool)
+    .await
+    .unwrap();
+    let (id, _) = create_transfer(&app, 3_000_000).await; // USD balance is 5,000.00
     let final_status = engine::advance_to_completion(&app.state, id, 0)
         .await
         .unwrap();
@@ -129,7 +140,7 @@ async fn insufficient_balance_rejects_at_funding() {
         ))
         .await;
     assert_eq!(n, 0);
-    assert_eq!(balance(&app, ACCT_USD).await, 12_450_000);
+    assert_eq!(balance(&app, ACCT_USD).await, 500_000);
 }
 
 #[tokio::test]
