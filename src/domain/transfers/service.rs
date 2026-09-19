@@ -1,8 +1,9 @@
 use super::engine;
 use super::repo::{self, InsertTransfer};
 use crate::audit::{write_audit, AuditEntry};
+use crate::contract::quote::FirmQuote;
 use crate::contract::transfer::{Transfer, TransferStatus, TransferTimeline};
-use crate::domain::{quote, recipients};
+use crate::domain::{ledger, quote, recipients};
 use crate::error::{ApiError, ApiResult};
 use crate::http::Session;
 use crate::state::AppState;
@@ -22,6 +23,53 @@ async fn owned_transfer(state: &AppState, session: &Session, id: &str) -> ApiRes
         .await?
         .filter(|t| t.customer_id == session.customer_id.to_string())
         .ok_or_else(|| ApiError::not_found("That transfer couldn't be found."))
+}
+
+// === Exposure limits
+
+/// Rejects a transfer that would breach the per-transfer or per-customer
+/// aggregate exposure ceiling (Business Rule #7), and logs the platform-wide
+/// FX exposure guardrail. It is visible only, a hard platform-wide cap is a
+/// later refinement. Must run inside the create transaction, after
+/// `lock_customer_limits`, so the aggregate sum cannot race a concurrent create.
+async fn check_exposure_limits(
+    conn: &mut sqlx::PgConnection,
+    state: &AppState,
+    customer_id: Uuid,
+    limits: ledger::CustomerLimits,
+    quote: &FirmQuote,
+) -> ApiResult<()> {
+    let amount_minor = quote.breakdown.send_amount.amount_minor;
+    let currency = quote.send_currency;
+
+    let max_transfer = limits
+        .max_transfer_amount_minor
+        .unwrap_or(state.config.max_transfer_amount_minor);
+    let max_aggregate = limits
+        .max_aggregate_exposure_minor
+        .unwrap_or(state.config.max_aggregate_exposure_minor);
+
+    if amount_minor > max_transfer {
+        return Err(ApiError::validation(format!(
+            "This transfer exceeds the maximum allowed amount of {} {}.",
+            max_transfer,
+            currency.as_str()
+        )));
+    }
+
+    let existing = ledger::customer_open_exposure_minor(&mut *conn, customer_id, currency).await?;
+    if existing + amount_minor > max_aggregate {
+        return Err(ApiError::validation(format!(
+            "This transfer would exceed your aggregate exposure limit of {} {}.",
+            max_aggregate,
+            currency.as_str()
+        )));
+    }
+
+    let platform_exposure = ledger::platform_open_exposure_by_currency(&mut *conn).await?;
+    tracing::info!(?platform_exposure, "platform-wide FX exposure");
+
+    return Ok(());
 }
 
 pub async fn create_transfer(
@@ -56,7 +104,22 @@ pub async fn create_transfer(
     let recipient_uuid = Uuid::parse_str(&recipient.id).unwrap();
 
     let fq = &quote.firm_quote;
+
     let mut tx = state.pool.begin().await?;
+    let limits = ledger::lock_customer_limits(&mut tx, session.customer_id).await?;
+
+    // A concurrent create with the same key may have committed while we waited
+    // on the customer lock; return it rather than failing the limit check.
+    if let Some(existing) =
+        repo::find_by_idempotency_key(&state.pool, session.customer_id, &input.idempotency_key)
+            .await?
+    {
+        tx.rollback().await?;
+        return Ok(existing);
+    }
+
+    check_exposure_limits(&mut tx, state, session.customer_id, limits, fq).await?;
+
     let inserted = repo::insert(
         &mut tx,
         InsertTransfer {

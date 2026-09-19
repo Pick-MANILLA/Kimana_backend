@@ -19,6 +19,13 @@ pub struct Config {
     /// Pause between simulated transfer steps once progression starts.
     pub transfer_step_delay_ms: u64,
 
+    /// Exposure ceiling for a single transfer's send amount (Business Rule #7).
+    /// Global for now, per-customer risk-derived limits are ISSUE-02.
+    pub max_transfer_amount_minor: i64,
+    /// Exposure ceiling for a customer's aggregate non-terminal transfer
+    /// amounts in one currency (Business Rule #7). Same caveat as above.
+    pub max_aggregate_exposure_minor: i64,
+
     /// True under integration tests: disables FX jitter and other nondeterminism.
     pub is_test: bool,
 }
@@ -49,6 +56,8 @@ impl Config {
             quote_ttl_seconds: num("QUOTE_TTL_SECONDS", 90),
             transfer_auto_advance_ms: num("TRANSFER_AUTO_ADVANCE_MS", 2500),
             transfer_step_delay_ms: num("TRANSFER_STEP_DELAY_MS", 700),
+            max_transfer_amount_minor: num("MAX_TRANSFER_AMOUNT_MINOR", 10_000_000),
+            max_aggregate_exposure_minor: num("MAX_AGGREGATE_EXPOSURE_MINOR", 20_000_000),
             is_test: false,
         }
     }
@@ -61,6 +70,8 @@ impl Config {
             quote_ttl_seconds: 90,
             transfer_auto_advance_ms: -1,
             transfer_step_delay_ms: 0,
+            max_transfer_amount_minor: 10_000_000,
+            max_aggregate_exposure_minor: 20_000_000,
             is_test: true,
             ..Config::from_env()
         }
