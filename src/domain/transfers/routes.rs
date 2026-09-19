@@ -14,6 +14,10 @@ pub fn routes() -> Router<AppState> {
         .route("/transfers", post(create).get(list))
         .route("/transfers/{id}", get(get_one))
         .route("/transfers/{id}/timeline", get(timeline))
+        .route(
+            "/transfers/{id}/screening/decision",
+            post(screening_decision),
+        )
 }
 
 #[derive(Deserialize)]
@@ -71,6 +75,34 @@ async fn timeline(
 struct ListQuery {
     #[serde(default)]
     status: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ScreeningDecisionBody {
+    decision: String,
+    #[serde(default)]
+    reason: Option<String>,
+}
+
+async fn screening_decision(
+    State(state): State<AppState>,
+    session: Session,
+    Path(id): Path<String>,
+    Body(body): Body<ScreeningDecisionBody>,
+) -> ApiResult<Json<Transfer>> {
+    Ok(Json(
+        service::decide_screening(
+            &state,
+            &session,
+            &id,
+            service::ScreeningDecisionInput {
+                decision: body.decision,
+                reason: body.reason,
+            },
+        )
+        .await?,
+    ))
 }
 
 async fn list(

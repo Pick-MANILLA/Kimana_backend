@@ -47,6 +47,7 @@ pub fn build_state(
         TransferStatus::Screened => TransferState::Screened {
             entered_at,
             hold: p.get("hold").and_then(|v| v.as_bool()).unwrap_or(false),
+            hold_reason: str_field(&p, "holdReason"),
             expected_resolution_by: str_field(&p, "expectedResolutionBy"),
         },
         TransferStatus::AwaitingFunds => TransferState::AwaitingFunds {

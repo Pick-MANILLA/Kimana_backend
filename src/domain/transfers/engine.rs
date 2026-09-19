@@ -18,9 +18,11 @@ use crate::contract::transfer::TransferStatus::{self, *};
 use crate::domain::ledger::{
     account_balance_minor, get_or_create_account, post_ledger_entry, LedgerPosting,
 };
-use crate::error::{ApiError, ApiResult};
+use crate::domain::screening;
+use crate::error::{ApiError, ApiResult, ErrorCode};
 use crate::state::AppState;
-use crate::util::tagged_reference;
+use crate::util::{iso, tagged_reference};
+use chrono::Utc;
 use serde_json::{json, Value};
 use std::time::Duration;
 use uuid::Uuid;
@@ -31,18 +33,31 @@ struct LockedTransfer {
     reference: String,
     customer_id: Uuid,
     recipient_id: Uuid,
+    recipient_country: String,
     send_currency: String,
     receive_currency: String,
     send_amount_minor: i64,
     receive_amount_minor: i64,
     current_status: String,
+    /// Payload of the most recently appended history row — when
+    /// `current_status` is `SCREENED`, this is that screening outcome.
+    latest_payload: Option<Value>,
 }
 
 async fn lock(conn: &mut sqlx::PgConnection, id: Uuid) -> ApiResult<LockedTransfer> {
     sqlx::query_as::<_, LockedTransfer>(
-        "select id, reference, customer_id, recipient_id, send_currency, receive_currency,
-                send_amount_minor, receive_amount_minor, current_status
-           from transfers where id = $1 for update",
+        "select t.id, t.reference, t.customer_id, t.recipient_id, r.country as recipient_country,
+                t.send_currency, t.receive_currency,
+                t.send_amount_minor, t.receive_amount_minor, t.current_status,
+                h.payload as latest_payload
+           from transfers t
+           join recipients r on r.id = t.recipient_id
+           left join lateral (
+             select payload from transfer_state_history
+              where transfer_id = t.id order by position desc limit 1
+           ) h on true
+          where t.id = $1
+          for update of t",
     )
     .bind(id)
     .fetch_optional(conn)
@@ -50,13 +65,43 @@ async fn lock(conn: &mut sqlx::PgConnection, id: Uuid) -> ApiResult<LockedTransf
     .ok_or_else(|| ApiError::not_found("Transfer not found."))
 }
 
-fn payload_for(to: TransferStatus) -> Option<Value> {
-    match to {
-        Screened => Some(json!({ "hold": false })),
+/// True only when `t.current_status` is `SCREENED` and that screening
+/// outcome held the transfer for review.
+fn is_held(t: &LockedTransfer) -> bool {
+    t.latest_payload
+        .as_ref()
+        .and_then(|p| p.get("hold"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+}
+
+fn payload_for(
+    t: &LockedTransfer,
+    to: TransferStatus,
+    amount_threshold_minor: i64,
+) -> ApiResult<Option<Value>> {
+    Ok(match to {
+        Screened => {
+            let outcome = screening::screen(
+                screening::ScreeningInput {
+                    recipient_country: &t.recipient_country,
+                    send_amount_minor: t.send_amount_minor,
+                    send_currency: CurrencyCode::parse(&t.send_currency)?,
+                },
+                amount_threshold_minor,
+            );
+            let mut payload = json!({ "hold": outcome.hold });
+            if outcome.hold {
+                payload["holdReason"] = json!(outcome.hold_reason);
+                payload["expectedResolutionBy"] =
+                    json!(iso(Utc::now() + chrono::Duration::hours(48)));
+            }
+            Some(payload)
+        }
         AwaitingFunds => Some(json!({ "fundingReference": tagged_reference("FR") })),
         Completed => Some(json!({ "payoutReference": tagged_reference("PO") })),
         _ => None,
-    }
+    })
 }
 
 async fn post_ledger_for(
@@ -170,6 +215,13 @@ pub async fn advance_once(
     let mut tx = state.pool.begin().await?;
     let t = lock(&mut tx, transfer_id).await?;
     let from = TransferStatus::parse(&t.current_status)?;
+
+    if from == Screened && is_held(&t) {
+        return Err(ApiError::compliance_hold(
+            "This transfer is on hold pending compliance review.",
+        ));
+    }
+
     let Some(to) = forward_step(from) else {
         tx.commit().await?;
         return Ok(from);
@@ -196,7 +248,8 @@ pub async fn advance_once(
         }
     }
 
-    apply(&mut tx, &t, actor_id, from, to, payload_for(to)).await?;
+    let payload = payload_for(&t, to, state.config.compliance_amount_threshold_minor)?;
+    apply(&mut tx, &t, actor_id, from, to, payload).await?;
     tx.commit().await?;
     Ok(to)
 }
@@ -208,11 +261,26 @@ async fn status_of(state: &AppState, id: Uuid) -> ApiResult<TransferStatus> {
         .ok_or_else(|| ApiError::not_found("Transfer not found."))
 }
 
+/// Applies one transition, treating a compliance hold as a stopping point
+/// (`Ok(from)`, unchanged) rather than an error — for the internal drive
+/// loops below, which advance as far as the transfer can go on its own.
+async fn advance_once_or_hold(
+    state: &AppState,
+    transfer_id: Uuid,
+    from: TransferStatus,
+) -> ApiResult<TransferStatus> {
+    match advance_once(state, transfer_id, None).await {
+        Err(e) if e.code == ErrorCode::ComplianceHold => Ok(from),
+        other => other,
+    }
+}
+
 /// Drives a just-created transfer through the internal checks to AWAITING_FUNDS.
+/// Stops early, still SCREENED, if compliance screening holds it for review.
 pub async fn advance_to_awaiting_funds(state: &AppState, id: Uuid) -> ApiResult<TransferStatus> {
     let mut status = status_of(state, id).await?;
     while matches!(status, Created | Quoted | Screened) {
-        let next = advance_once(state, id, None).await?;
+        let next = advance_once_or_hold(state, id, status).await?;
         if next == status {
             break;
         }
@@ -235,7 +303,7 @@ pub async fn advance_to_completion(
         if step_delay_ms > 0 {
             tokio::time::sleep(Duration::from_millis(step_delay_ms)).await;
         }
-        let next = advance_once(state, id, None).await?;
+        let next = advance_once_or_hold(state, id, status).await?;
         if next == status {
             break;
         }
@@ -315,4 +383,54 @@ pub async fn reverse_transfer(
 
     tx.commit().await?;
     Ok(entry_id.to_string())
+}
+
+/// A compliance analyst's disposition of a held SCREENED transfer.
+pub enum ScreeningDecision {
+    Clear,
+    Reject,
+}
+
+/// Ops decision on a held transfer: clears it on to AWAITING_FUNDS, or
+/// rejects it outright. Stub back-office action — reachable by any session
+/// today, pending real operator-role auth (tracked separately); the hold
+/// this resolves is real.
+pub async fn resolve_screening_hold(
+    state: &AppState,
+    id: Uuid,
+    decision: ScreeningDecision,
+    reason: Option<String>,
+    actor_id: Option<Uuid>,
+) -> ApiResult<TransferStatus> {
+    let mut tx = state.pool.begin().await?;
+    let t = lock(&mut tx, id).await?;
+    let from = TransferStatus::parse(&t.current_status)?;
+    if from != Screened || !is_held(&t) {
+        return Err(ApiError::conflict(
+            "This transfer is not currently on a compliance hold.",
+        ));
+    }
+
+    let (to, payload) = match decision {
+        ScreeningDecision::Clear => (
+            AwaitingFunds,
+            json!({
+                "fundingReference": tagged_reference("FR"),
+                "holdResolution": "cleared",
+                "holdResolutionReason": reason,
+            }),
+        ),
+        ScreeningDecision::Reject => (
+            Rejected,
+            json!({
+                "failureCategory": "compliance_hold",
+                "reasonCode": "COMPLIANCE_HOLD",
+                "reason": reason,
+            }),
+        ),
+    };
+
+    apply(&mut tx, &t, actor_id, from, to, Some(payload)).await?;
+    tx.commit().await?;
+    Ok(to)
 }

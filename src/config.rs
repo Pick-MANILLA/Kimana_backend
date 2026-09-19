@@ -26,6 +26,10 @@ pub struct Config {
     /// amounts in one currency (Business Rule #7). Same caveat as above.
     pub max_aggregate_exposure_minor: i64,
 
+    /// Send amount at or above which compliance screening holds a transfer
+    /// for manual review (Business Rule #1), regardless of currency.
+    pub compliance_amount_threshold_minor: i64,
+
     /// True under integration tests: disables FX jitter and other nondeterminism.
     pub is_test: bool,
 }
@@ -58,6 +62,7 @@ impl Config {
             transfer_step_delay_ms: num("TRANSFER_STEP_DELAY_MS", 700),
             max_transfer_amount_minor: num("MAX_TRANSFER_AMOUNT_MINOR", 10_000_000),
             max_aggregate_exposure_minor: num("MAX_AGGREGATE_EXPOSURE_MINOR", 20_000_000),
+            compliance_amount_threshold_minor: num("COMPLIANCE_AMOUNT_THRESHOLD_MINOR", 5_000_000),
             is_test: false,
         }
     }
@@ -72,6 +77,7 @@ impl Config {
             transfer_step_delay_ms: 0,
             max_transfer_amount_minor: 10_000_000,
             max_aggregate_exposure_minor: 20_000_000,
+            compliance_amount_threshold_minor: 5_000_000,
             is_test: true,
             ..Config::from_env()
         }

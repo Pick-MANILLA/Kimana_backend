@@ -90,6 +90,9 @@ impl ApiError {
     pub fn rate_expired(message: impl Into<String>) -> Self {
         ApiError::new(ErrorCode::RateExpired, message)
     }
+    pub fn compliance_hold(message: impl Into<String>) -> Self {
+        ApiError::new(ErrorCode::ComplianceHold, message)
+    }
     pub fn server_error() -> Self {
         ApiError::new(
             ErrorCode::ServerError,

@@ -7,7 +7,7 @@ use crate::domain::{ledger, quote, recipients};
 use crate::error::{ApiError, ApiResult};
 use crate::http::Session;
 use crate::state::AppState;
-use crate::util::tagged_reference;
+use crate::util::{is_uuid, tagged_reference};
 use chrono::Utc;
 use serde_json::json;
 use uuid::Uuid;
@@ -227,4 +227,47 @@ pub async fn list_transfers(
     status: Option<TransferStatus>,
 ) -> ApiResult<Vec<Transfer>> {
     repo::list_by_customer(&state.pool, session.customer_id, status).await
+}
+
+pub struct ScreeningDecisionInput {
+    pub decision: String,
+    pub reason: Option<String>,
+}
+
+/// Stub ops decision on a held transfer — not scoped to the caller's
+/// customer, since resolving a compliance hold is a back-office action, not
+/// a customer one. See `engine::resolve_screening_hold`.
+pub async fn decide_screening(
+    state: &AppState,
+    session: &Session,
+    id: &str,
+    input: ScreeningDecisionInput,
+) -> ApiResult<Transfer> {
+    if !is_uuid(id) {
+        return Err(ApiError::not_found("That transfer couldn't be found."));
+    }
+    let transfer_id = Uuid::parse_str(id).unwrap();
+
+    let decision = match input.decision.as_str() {
+        "clear" => engine::ScreeningDecision::Clear,
+        "reject" => engine::ScreeningDecision::Reject,
+        _ => {
+            return Err(ApiError::validation(
+                "decision must be \"clear\" or \"reject\".",
+            ))
+        }
+    };
+
+    engine::resolve_screening_hold(
+        state,
+        transfer_id,
+        decision,
+        input.reason,
+        Some(session.user_id),
+    )
+    .await?;
+
+    repo::find_by_id_uuid(&state.pool, transfer_id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("That transfer couldn't be found."))
 }

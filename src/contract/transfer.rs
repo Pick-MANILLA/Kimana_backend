@@ -114,6 +114,8 @@ pub enum TransferState {
         entered_at: String,
         hold: bool,
         #[serde(skip_serializing_if = "Option::is_none")]
+        hold_reason: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         expected_resolution_by: Option<String>,
     },
     AwaitingFunds {
