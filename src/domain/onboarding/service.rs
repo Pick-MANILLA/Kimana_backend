@@ -7,6 +7,7 @@ use crate::contract::onboarding::{
     ApprovedAccountSummary, BusinessDetails, DirectorOrBeneficialOwner, OnboardingApplication,
     OnboardingDocumentType, UploadedDocument,
 };
+use crate::domain::ledger;
 use crate::error::{ApiError, ApiResult};
 use crate::http::Session;
 use crate::state::AppState;
@@ -300,9 +301,10 @@ pub async fn submit(
         repo::replace_kyb_checks(&mut tx, app_uuid, &outcome.checks).await?;
 
         if outcome.approved {
+            let transaction_limit_minor = outcome.risk_rating.transaction_limit_minor();
             let summary = ApprovedAccountSummary {
                 account_id: generate_account_id(&business.legal_name),
-                risk_rating_label: "Medium-Low".into(),
+                risk_rating_label: outcome.risk_rating.label().into(),
                 segment: business.industry.segment_label().into(),
                 corridor: "NGN → USD / EUR".into(),
                 monthly_limit: Money::new(100_000_00, CurrencyCode::Usd),
@@ -318,7 +320,25 @@ pub async fn submit(
                 },
             )
             .await?;
+            ledger::set_transfer_limit(&mut tx, session.customer_id, transaction_limit_minor)
+                .await?;
             audit_transition(&mut tx, session, &app.id, "in_review", "approved").await?;
+            write_audit(
+                &mut tx,
+                AuditEntry {
+                    actor_id: Some(session.user_id),
+                    actor_role: Some(session.role_str()),
+                    action: "customer.risk_rating_assigned",
+                    entity_type: "customer",
+                    entity_id: session.customer_id.to_string(),
+                    before: None,
+                    after: Some(json!({
+                        "riskRating": outcome.risk_rating.label(),
+                        "maxTransferAmountMinor": transaction_limit_minor,
+                    })),
+                },
+            )
+            .await?;
         } else {
             repo::patch_status(
                 &mut tx,
@@ -364,4 +384,92 @@ async fn audit_transition(
     )
     .await?;
     Ok(())
+}
+
+pub struct RescreenOutcome {
+    pub customer_id: String,
+    pub application_id: String,
+    pub risk_rating: &'static str,
+    pub transaction_limit_minor: Option<i64>,
+}
+
+/// Re-runs KYB checks against every approved customer and updates their
+/// stored risk rating / per-transfer limit. No status transition — a check
+/// that now fails is recorded (`kyb_checks`) but doesn't itself revoke
+/// approval; that back-office decision is separate, later work. Driven today
+/// by `cargo run --bin rescreen`; a real scheduler slots in without changing
+/// this function.
+pub async fn rescreen_approved_customers(state: &AppState) -> ApiResult<Vec<RescreenOutcome>> {
+    let apps = repo::list_approved(&state.pool).await?;
+    let mut outcomes = Vec::with_capacity(apps.len());
+
+    for app in apps {
+        let Some(business) = app.business.clone() else {
+            tracing::warn!(application_id = %app.id, "approved application has no business details");
+            continue;
+        };
+        let app_uuid = Uuid::parse_str(&app.id).unwrap();
+        let customer_uuid = Uuid::parse_str(&app.customer_id).unwrap();
+
+        let outcome = kyb::run_checks(&app, 0).await;
+        let transaction_limit_minor = outcome.risk_rating.transaction_limit_minor();
+        let previous_label = app
+            .approved_summary
+            .as_ref()
+            .map(|s| s.risk_rating_label.clone());
+
+        let summary = ApprovedAccountSummary {
+            risk_rating_label: outcome.risk_rating.label().into(),
+            ..app
+                .approved_summary
+                .clone()
+                .unwrap_or(ApprovedAccountSummary {
+                    account_id: generate_account_id(&business.legal_name),
+                    risk_rating_label: String::new(),
+                    segment: business.industry.segment_label().into(),
+                    corridor: "NGN → USD / EUR".into(),
+                    monthly_limit: Money::new(100_000_00, CurrencyCode::Usd),
+                })
+        };
+
+        let mut tx = state.pool.begin().await?;
+        repo::replace_kyb_checks(&mut tx, app_uuid, &outcome.checks).await?;
+        repo::patch_status(
+            &mut tx,
+            app_uuid,
+            StatusPatch {
+                status: app.status.clone(),
+                approved_summary: Some(summary),
+                ..Default::default()
+            },
+        )
+        .await?;
+        ledger::set_transfer_limit(&mut tx, customer_uuid, transaction_limit_minor).await?;
+        write_audit(
+            &mut tx,
+            AuditEntry {
+                actor_id: None,
+                actor_role: Some("system"),
+                action: "onboarding.rescreened",
+                entity_type: "onboarding_application",
+                entity_id: app.id.clone(),
+                before: Some(json!({ "riskRating": previous_label })),
+                after: Some(json!({
+                    "riskRating": outcome.risk_rating.label(),
+                    "maxTransferAmountMinor": transaction_limit_minor,
+                })),
+            },
+        )
+        .await?;
+        tx.commit().await?;
+
+        outcomes.push(RescreenOutcome {
+            customer_id: app.customer_id.clone(),
+            application_id: app.id.clone(),
+            risk_rating: outcome.risk_rating.label(),
+            transaction_limit_minor,
+        });
+    }
+
+    Ok(outcomes)
 }

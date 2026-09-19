@@ -16,6 +16,10 @@ path = "src/bin/migrate.rs"
 name = "seed"
 path = "src/bin/seed.rs"
 
+[[bin]]
+name = "rescreen"
+path = "src/bin/rescreen.rs"
+
 [dependencies]
 anyhow = "1"
 axum = { version = "0.8", features = ["multipart"] }

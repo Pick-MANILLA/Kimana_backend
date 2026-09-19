@@ -125,6 +125,20 @@ pub async fn find_by_customer(
     }
 }
 
+/// All approved applications, for the rescreening job.
+pub async fn list_approved(pool: &PgPool) -> ApiResult<Vec<OnboardingApplication>> {
+    let rows: Vec<AppRow> = sqlx::query_as(&format!(
+        "select {APP_COLS} from onboarding_applications where status = 'approved'"
+    ))
+    .fetch_all(pool)
+    .await?;
+    let mut apps = Vec::with_capacity(rows.len());
+    for row in rows {
+        apps.push(assemble(pool, row).await?);
+    }
+    Ok(apps)
+}
+
 pub async fn save_business(
     conn: &mut sqlx::PgConnection,
     app_id: Uuid,

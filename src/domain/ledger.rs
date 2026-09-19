@@ -138,6 +138,23 @@ pub async fn lock_customer_limits(
     });
 }
 
+/// Sets (or, with `None`, clears) a customer's per-transfer send-amount
+/// ceiling — the risk-derived override `CustomerLimits`/`lock_customer_limits`
+/// read back. Called on KYB approval and rescreening (Business Rule #1's
+/// risk-based limits), never by the transfer path itself.
+pub async fn set_transfer_limit(
+    conn: &mut sqlx::PgConnection,
+    customer_id: Uuid,
+    max_transfer_amount_minor: Option<i64>,
+) -> ApiResult<()> {
+    sqlx::query("update customers set max_transfer_amount_minor = $2 where id = $1")
+        .bind(customer_id)
+        .bind(max_transfer_amount_minor)
+        .execute(conn)
+        .await?;
+    Ok(())
+}
+
 /// Platform-wide non-terminal exposure per currency, for the FX-exposure
 /// guardrail. Visible for now; a hard platform-wide cap is a later refinement.
 pub async fn platform_open_exposure_by_currency(
