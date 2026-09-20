@@ -3,6 +3,7 @@ name = "kimana-backend"
 version = "0.0.0"
 edition = "2021"
 publish = false
+default-run = "kimana-backend"
 
 [[bin]]
 name = "kimana-backend"
