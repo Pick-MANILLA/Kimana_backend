@@ -1,5 +1,8 @@
+use crate::error::{ApiError, ApiResult};
+use argon2::{Argon2, PasswordHasher, PasswordVerifier};
 use chrono::{DateTime, SecondsFormat, Utc};
 use rand::Rng;
+use sha2::{Digest, Sha256};
 
 /// ISO-8601 with millisecond precision and a `Z` suffix — matches JS `Date.toISOString()`.
 pub fn iso(dt: DateTime<Utc>) -> String {
@@ -51,4 +54,31 @@ pub fn generate_account_id(legal_name: &str) -> String {
     };
     let serial = rand::thread_rng().gen_range(10000..100000);
     format!("{initials}-{serial}")
+}
+
+/// Argon2id with default (OWASP-recommended) parameters, fresh random salt.
+pub fn hash_password(password: &str) -> ApiResult<String> {
+    Argon2::default()
+        .hash_password(password.as_bytes())
+        .map(|hash| hash.to_string())
+        .map_err(|_| ApiError::server_error())
+}
+
+/// Never errors — a malformed stored hash or a mismatch both mean "no".
+pub fn verify_password(password: &str, hash: &str) -> bool {
+    Argon2::default()
+        .verify_password(password.as_bytes(), hash)
+        .is_ok()
+}
+
+/// A cryptographically random, hex-encoded session token (32 bytes = 256 bits).
+pub fn generate_session_token() -> String {
+    let mut bytes = [0u8; 32];
+    rand::thread_rng().fill(&mut bytes);
+    hex::encode(bytes)
+}
+
+/// SHA-256 of a session token — what's actually stored/looked up in `sessions`.
+pub fn hash_token(token: &str) -> String {
+    hex::encode(Sha256::digest(token.as_bytes()))
 }

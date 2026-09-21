@@ -51,6 +51,7 @@ pub fn build_app(state: AppState) -> Router {
     Router::new()
         .route("/health", get(|| async { Json(json!({ "ok": true })) }))
         .merge(routes::session_routes())
+        .merge(domain::auth::routes())
         .merge(domain::onboarding::routes())
         .merge(domain::dashboard::routes())
         .merge(domain::fx::routes())

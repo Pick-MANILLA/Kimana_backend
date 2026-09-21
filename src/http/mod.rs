@@ -1,6 +1,6 @@
 pub mod auth;
 
-pub use auth::Session;
+pub use auth::{Session, SESSION_COOKIE_NAME};
 
 use crate::error::ApiError;
 use axum::extract::{FromRequest, Request};

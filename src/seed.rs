@@ -4,10 +4,17 @@
 use crate::contract::common::CurrencyCode;
 use crate::contract::quote::{CostBreakdown, FirmQuote};
 use crate::ids::*;
+use crate::util::hash_password;
 use serde_json::json;
 use sqlx::types::Json;
 use sqlx::PgPool;
 use uuid::Uuid;
+
+/// Known credentials for the seeded demo customer — used by local dev
+/// (`cargo run --bin seed` then log in) and by the integration test harness
+/// (`tests/common/mod.rs` logs in as this user after every seed).
+pub const DEMO_EMAIL: &str = "chinonso@adunolaexports.test";
+pub const DEMO_PASSWORD: &str = "DemoPass123!";
 
 const OPENING_BALANCES: &[(Uuid, &str, i64)] = &[
     (DEMO_ACCOUNT_NGN, "NGN", 4_825_000_000),
@@ -153,17 +160,20 @@ pub async fn seed(pool: &PgPool) -> anyhow::Result<()> {
         "truncate audit_log, ledger_entries, transfer_state_history, transfers, quotes,
                   recipients, fx_rates, fx_secondary_rates, fx_rate_divergence_events, kyb_checks,
                   onboarding_documents, onboarding_principals,
-                  onboarding_applications, accounts, customers, users
+                  onboarding_applications, accounts, customers, sessions, users
          restart identity cascade",
     )
     .execute(&mut *tx)
     .await?;
 
+    let demo_password_hash = hash_password(DEMO_PASSWORD)?;
     sqlx::query(
-        "insert into users (id, role, display_name, operator_permissions)
-         values ($1, 'customer', 'Chinonso', '{}')",
+        "insert into users (id, role, display_name, operator_permissions, email, password_hash)
+         values ($1, 'customer', 'Chinonso', '{}', $2, $3)",
     )
     .bind(DEMO_USER_ID)
+    .bind(DEMO_EMAIL)
+    .bind(&demo_password_hash)
     .execute(&mut *tx)
     .await?;
 

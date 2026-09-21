@@ -273,6 +273,7 @@ async fn create_transfer_from_header_idempotency_key() {
         .uri("/transfers")
         .header("content-type", "application/json")
         .header("idempotency-key", "header-key-000001")
+        .header("cookie", app.cookie_header().expect("logged in by TestApp::new"))
         .body(axum::body::Body::from(
             json!({ "quoteId": quote["id"], "recipientId": RECIPIENT }).to_string(),
         ))

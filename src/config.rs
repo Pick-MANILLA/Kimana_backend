@@ -38,6 +38,11 @@ pub struct Config {
 
     /// True under integration tests: disables FX jitter and other nondeterminism.
     pub is_test: bool,
+
+    /// Whether the session cookie is marked `Secure`. Browsers silently drop
+    /// `Secure` cookies over plain `http://localhost`, so local dev needs
+    /// `COOKIE_SECURE=false`; production (behind TLS) keeps the default.
+    pub cookie_secure: bool,
 }
 
 fn var(key: &str, default: &str) -> String {
@@ -80,6 +85,7 @@ impl Config {
             compliance_amount_threshold_minor: num("COMPLIANCE_AMOUNT_THRESHOLD_MINOR", 5_000_000),
             fx_divergence_threshold_percent: num("FX_DIVERGENCE_THRESHOLD_PERCENT", 1.0),
             is_test: false,
+            cookie_secure: num("COOKIE_SECURE", true),
         }
     }
 
@@ -96,6 +102,7 @@ impl Config {
             compliance_amount_threshold_minor: 5_000_000,
             fx_divergence_threshold_percent: 1.0,
             is_test: true,
+            cookie_secure: false,
             ..Config::from_env()
         }
     }
