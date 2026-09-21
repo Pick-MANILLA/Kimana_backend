@@ -19,10 +19,20 @@ pub fn routes() -> Router<AppState> {
 }
 
 fn set_session_cookie(jar: CookieJar, state: &AppState, token: String) -> CookieJar {
+    // `SameSite=None` is required for the frontend (Vercel) and this API
+    // (Render) sitting on different domains in production — browsers drop
+    // `Lax` cookies on cross-site fetch/XHR. `None` requires `Secure`, so it
+    // only applies when `cookie_secure` is on; local HTTP dev stays `Lax`
+    // (frontend/backend differ only by port there, which is same-site).
+    let same_site = if state.config.cookie_secure {
+        SameSite::None
+    } else {
+        SameSite::Lax
+    };
     let cookie = Cookie::build((SESSION_COOKIE_NAME, token))
         .http_only(true)
         .path("/")
-        .same_site(SameSite::Lax)
+        .same_site(same_site)
         .secure(state.config.cookie_secure)
         .max_age(Duration::days(SESSION_TTL_DAYS))
         .build();

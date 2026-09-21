@@ -44,6 +44,20 @@ interface WireError {
   retryable: boolean;
 }
 
+export interface RegisterInput {
+  email: string;
+  password: string;
+  displayName: string;
+  /** Registered business/company name — required up front (P1 slice has no
+   *  path to set it later; onboarding's business details are separate). */
+  legalName: string;
+}
+
+export interface LoginInput {
+  email: string;
+  password: string;
+}
+
 class HttpApiError extends Error {
   readonly code: string;
   readonly retryable: boolean;
@@ -127,6 +141,9 @@ export function createLiveApiClient(): ApiClient {
 
     auth: {
       getSession: () => http('GET', '/session'),
+      register: (input: RegisterInput) => http('POST', '/register', input),
+      login: (input: LoginInput) => http('POST', '/login', input),
+      logout: () => http<void>('POST', '/logout'),
     },
 
     onboarding: {

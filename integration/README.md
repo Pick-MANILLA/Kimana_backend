@@ -72,4 +72,19 @@ mutation writes an `audit_log` row.
   `CORS_ORIGIN=http://localhost:3000,https://kimana-frontend.vercel.app`.
 - `uploadDocument`'s `onProgress` jumps straight to 100 — `fetch` can't stream
   upload progress. Swap to `XMLHttpRequest` there if the progress bar matters.
-- The backend uses a single seeded demo session, so there's no login step yet.
+- Auth is now real: `POST /register` (email, password, displayName,
+  legalName), `POST /login` (email, password), `POST /logout`. `client.ts`'s
+  `auth` object already has `register`/`login`/`logout` methods (matching
+  `RegisterInput`/`LoginInput` exported from this file) — **the `ApiClient`
+  contract type in `Kimana_frontend/src/api/contract` needs those three
+  method signatures added to its `auth` interface** (mirroring `getSession`'s
+  shape) before this compiles there; the mock client needs matching stub
+  implementations too.
+- **Production cookie note**: the session cookie is `SameSite=None; Secure`
+  whenever the backend has `COOKIE_SECURE=true` (the default) — required for
+  it to survive a cross-domain setup like Vercel (frontend) + Render
+  (backend). Locally (`COOKIE_SECURE` unset/false, plain HTTP) it's
+  `SameSite=Lax` instead, which is what same-site `localhost:3000` →
+  `localhost:4000` needs. No action required unless you're running the
+  backend over plain HTTP in a non-local deployment, in which case login will
+  silently fail to persist — set `COOKIE_SECURE=true` and serve over HTTPS.
