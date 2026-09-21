@@ -31,7 +31,7 @@ In `Kimana_frontend/src/api/index.ts`:
 
 -export const api: ApiClient = mockApiClient;
 +export const api: ApiClient =
-+  import.meta.env.VITE_API_URL || import.meta.env.PROD
++  process.env.NEXT_PUBLIC_API_URL || process.env.NODE_ENV === 'production'
 +    ? createLiveApiClient()
 +    : mockApiClient;
 ```
@@ -45,7 +45,7 @@ screens.)
 `Kimana_frontend/.env.local`:
 
 ```
-VITE_API_URL=http://localhost:4000
+NEXT_PUBLIC_API_URL=http://localhost:4000
 ```
 
 ## 4. Run both
@@ -55,7 +55,7 @@ VITE_API_URL=http://localhost:4000
 docker compose up -d && cargo run --bin seed && cargo run     # :4000
 
 # terminal 2 — Kimana_frontend
-npm run dev                                                   # :5173
+npm run dev                                                   # :3000
 ```
 
 Then walk `/onboarding/business-details` → `/onboarding/approved` and land on
@@ -65,8 +65,11 @@ mutation writes an `audit_log` row.
 
 ## Notes
 
-- `CORS_ORIGIN` in the backend `.env` must match the Vite origin
-  (`http://localhost:5173` by default).
+- `CORS_ORIGIN` in the backend `.env` must match the frontend's origin
+  (`http://localhost:3000` by default for `next dev`). It accepts a
+  comma-separated list, so local dev and a deployed frontend origin can both
+  be allowed at once, e.g.
+  `CORS_ORIGIN=http://localhost:3000,https://kimana-frontend.vercel.app`.
 - `uploadDocument`'s `onProgress` jumps straight to 100 — `fetch` can't stream
   upload progress. Swap to `XMLHttpRequest` there if the progress bar matters.
 - The backend uses a single seeded demo session, so there's no login step yet.

@@ -36,8 +36,7 @@ import type { CreateTransferInput } from '../types/transfer';
 import { mockApiClient } from '../mock';
 
 const BASE_URL =
-  (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') ??
-  'http://localhost:4000';
+  process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, '') ?? 'http://localhost:4000';
 
 interface WireError {
   code: string;

@@ -19,17 +19,22 @@ use axum::routing::get;
 use axum::{Json, Router};
 use serde_json::json;
 use state::AppState;
-use tower_http::cors::CorsLayer;
+use tower_http::cors::{AllowOrigin, CorsLayer};
 
 pub fn build_app(state: AppState) -> Router {
-    let cors = CorsLayer::new()
-        .allow_origin(
-            state
-                .config
-                .cors_origin
+    let origins: Vec<HeaderValue> = state
+        .config
+        .cors_origins
+        .iter()
+        .map(|origin| {
+            origin
                 .parse::<HeaderValue>()
-                .expect("CORS_ORIGIN must be a valid header value"),
-        )
+                .expect("CORS_ORIGIN entries must be valid header values")
+        })
+        .collect();
+
+    let cors = CorsLayer::new()
+        .allow_origin(AllowOrigin::list(origins))
         .allow_methods([
             Method::GET,
             Method::POST,

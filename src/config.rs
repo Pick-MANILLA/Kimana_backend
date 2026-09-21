@@ -7,7 +7,9 @@ pub struct Config {
     pub port: u16,
     pub database_url: String,
     pub storage_dir: String,
-    pub cors_origin: String,
+    /// Allowed CORS origins. `CORS_ORIGIN` may hold a single origin or a
+    /// comma-separated list (e.g. dev + the deployed frontend at once).
+    pub cors_origins: Vec<String>,
 
     /// Simulated per-check latency for the stub KYB provider.
     pub kyb_check_delay_ms: u64,
@@ -49,6 +51,15 @@ fn num<T: std::str::FromStr>(key: &str, default: T) -> T {
         .unwrap_or(default)
 }
 
+fn csv(key: &str, default: &str) -> Vec<String> {
+    var(key, default)
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
 impl Config {
     pub fn from_env() -> Self {
         Config {
@@ -59,7 +70,7 @@ impl Config {
                 "postgres://kimana:kimana@localhost:5432/kimana",
             ),
             storage_dir: var("STORAGE_DIR", ".storage"),
-            cors_origin: var("CORS_ORIGIN", "http://localhost:5173"),
+            cors_origins: csv("CORS_ORIGIN", "http://localhost:3000"),
             kyb_check_delay_ms: num("KYB_CHECK_DELAY_MS", 600),
             quote_ttl_seconds: num("QUOTE_TTL_SECONDS", 90),
             transfer_auto_advance_ms: num("TRANSFER_AUTO_ADVANCE_MS", 2500),

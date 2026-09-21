@@ -136,7 +136,7 @@ computed under an account row lock):
 ## Connecting the frontend
 
 See `integration/README.md` — copy one file into `Kimana_frontend`, flip
-`src/api/index.ts`, set `VITE_API_URL`. The wire contract (HTTP/JSON) is
+`src/api/index.ts`, set `NEXT_PUBLIC_API_URL`. The wire contract (HTTP/JSON) is
 identical regardless of backend language.
 
 ## Known gaps (tracked in docs/backend-plan.md)
