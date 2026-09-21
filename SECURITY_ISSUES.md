@@ -223,3 +223,27 @@ In `src/lib.rs`, the router applies `DefaultBodyLimit::max(12 * 1024 * 1024)` gl
 #### 3. Acceptance Criteria
 - [ ] Requests hanging beyond 15 seconds terminate with `408 Request Timeout`.
 - [ ] Standard JSON endpoints reject payloads larger than 128 KB.
+
+---
+
+### ISSUE-BE-06: Remediate Dynamic SQL String Formatting in Repository Queries
+
+**Priority:** Low (P3)  
+**Labels:** `security`, `database`, `sqlx`  
+**Files:** `src/domain/transfers/repo.rs`, `src/domain/quote.rs`  
+
+#### 1. What the Problem Is
+SQL queries in repository modules use runtime string interpolation:
+```rust
+let sql = format!("{SELECT_TRANSFERS} where customer_id = $1 order by created_at desc");
+```
+While the interpolated constants are currently internal strings, dynamic query generation bypasses SQLx compile-time query verification (`sqlx::query!`) and establishes a hazardous anti-pattern that future changes might accidentally extend to user inputs.
+
+#### 2. Step-by-Step Resolution Guide
+1. Replace runtime `format!` calls with static string constants or `sqlx::query!` macros.
+2. For dynamic filtering, construct query builders or use structured parameter binding.
+
+#### 3. Acceptance Criteria
+- [ ] No `format!` string construction used for SQL query generation in repository layers.
+- [ ] All database queries utilize static query strings with parameterized bind arguments.
+
