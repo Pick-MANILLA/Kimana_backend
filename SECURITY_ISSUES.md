@@ -86,6 +86,8 @@ Any incoming request without cookies, tokens, or credentials inherits full admin
 
 ### ISSUE-BE-02: Port Integer Floor FX Math to Synchronize with Smart Contracts
 
+**Status:** ✅ `derive_amounts` (`src/domain/quote.rs`) no longer uses `f64::round()`. It now goes through `apply_rate`/`invert_rate` (`src/util.rs`), which scale the rate to a fixed-point `i128` (`RATE_DECIMALS = 8`) once and then do plain integer floor division for the actual money math — the same `.5`-rounds-up-vs-floors discrepancy this issue describes is covered by `util::rate_math_tests::floors_instead_of_rounding_half_up` and `domain::quote::tests::no_float_round_in_money_math`. **Not independently verified:** there is no `FxMath.sol` / `SettlementVault` in this repository, so "matches `FxMath.sol` across 1,000 test vectors" couldn't be checked here — if that contract lives in another repo, someone with access to it should confirm the scaling (`RATE_DECIMALS`/`USDC_DECIMALS` conventions) actually lines up before relying on this for on-chain reconciliation.
+
 **Priority:** High (P1)  
 **Labels:** `security`, `math`, `settlement`  
 **Files:** `src/domain/quote.rs`, `src/contract/quote.rs`  
@@ -131,8 +133,8 @@ Whenever the fractional product has a fractional part $\ge 0.5$, Rust's `.round(
    Add unit tests verifying that Rust calculations match `FxMath.sol` test vectors exactly across 1,000 test cases.
 
 #### 3. Acceptance Criteria
-- [ ] No floating point `f64::round()` used in money calculation.
-- [ ] Receive amount calculation matches `FxMath.sol` across all test vectors with zero difference.
+- [x] No floating point `f64::round()` used in money calculation.
+- [ ] Receive amount calculation matches `FxMath.sol` across all test vectors with zero difference. *(Unverifiable here — no `FxMath.sol` in this repo; see Status above.)*
 
 ---
 

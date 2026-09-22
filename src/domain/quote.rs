@@ -6,7 +6,7 @@ use crate::domain::fx;
 use crate::error::{ApiError, ApiResult};
 use crate::http::{Body, Session};
 use crate::state::AppState;
-use crate::util::{is_uuid, iso};
+use crate::util::{apply_rate, invert_rate, is_uuid, iso};
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::routing::post;
@@ -90,10 +90,40 @@ struct RequestFirmQuoteBody {
 
 /// Both currencies use minor-unit exponent 2, so the minor-unit ratio equals
 /// the quoted major-unit rate — same shortcut the frontend mock takes.
+///
+/// Uses fixed-point integer math (`apply_rate`/`invert_rate`), not
+/// `f64::round()` — see ISSUE-BE-02. `.round()` rounds a `.5` fractional
+/// product up, which disagrees with the floor division settlement math on
+/// the other side of a quote uses, and would fail reconciliation there.
 fn derive_amounts(field: QuoteAmountField, amount_minor: i64, rate: f64) -> (i64, i64) {
     match field {
-        QuoteAmountField::Send => (amount_minor, (amount_minor as f64 * rate).round() as i64),
-        QuoteAmountField::Receive => ((amount_minor as f64 / rate).round() as i64, amount_minor),
+        QuoteAmountField::Send => (amount_minor, apply_rate(amount_minor, rate)),
+        QuoteAmountField::Receive => (invert_rate(amount_minor, rate), amount_minor),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn no_float_round_in_money_math() {
+        // Same boundary case as util::rate_math_tests::floors_instead_of_rounding_half_up,
+        // exercised through derive_amounts directly.
+        let (_, receive) = derive_amounts(QuoteAmountField::Send, 1, 0.5);
+        assert_eq!(receive, 0, "must floor, not round, a .5 fractional product");
+    }
+
+    #[test]
+    fn send_and_receive_fields_are_inverses() {
+        let rate = 1645.2;
+        let (send, receive) = derive_amounts(QuoteAmountField::Send, 4_500_000, rate);
+        assert_eq!(send, 4_500_000);
+        assert_eq!(receive, 7_403_400_000);
+
+        let (send2, receive2) = derive_amounts(QuoteAmountField::Receive, receive, rate);
+        assert_eq!(receive2, receive);
+        assert_eq!(send2, send);
     }
 }
 

@@ -82,3 +82,62 @@ pub fn generate_session_token() -> String {
 pub fn hash_token(token: &str) -> String {
     hex::encode(Sha256::digest(token.as_bytes()))
 }
+
+/// Decimal places the fixed-point rate math below scales to. Matches the
+/// precision an on-chain FX oracle would publish a rate at, so `apply_rate`/
+/// `invert_rate` do the same integer floor-division a settlement contract
+/// does instead of `f64::round()`, which rounds `.5` up and so disagrees
+/// with floor division on exactly the cases that matter (see ISSUE-BE-02).
+pub const RATE_DECIMALS: u32 = 8;
+const RATE_SCALE: i128 = 10i128.pow(RATE_DECIMALS);
+
+/// Scales a decimal rate (e.g. `1650.2345`) to a fixed-point integer with
+/// `RATE_DECIMALS` places. The only place rate math touches `f64` — everything
+/// downstream is integer arithmetic.
+fn scale_rate(rate: f64) -> i128 {
+    (rate * RATE_SCALE as f64).round() as i128
+}
+
+/// `amount_minor * rate`, as integer fixed-point floor division (Rust integer
+/// division truncates toward zero, which is floor division for the
+/// non-negative amounts money math here deals in).
+pub fn apply_rate(amount_minor: i64, rate: f64) -> i64 {
+    let scaled = scale_rate(rate);
+    ((amount_minor as i128 * scaled) / RATE_SCALE) as i64
+}
+
+/// Inverse of `apply_rate`: `amount_minor / rate`.
+pub fn invert_rate(amount_minor: i64, rate: f64) -> i64 {
+    let scaled = scale_rate(rate);
+    ((amount_minor as i128 * RATE_SCALE) / scaled) as i64
+}
+
+#[cfg(test)]
+mod rate_math_tests {
+    use super::*;
+
+    #[test]
+    fn floors_instead_of_rounding_half_up() {
+        // 1 minor unit * rate 0.5 = 0.5 exactly. f64::round() rounds this up
+        // to 1; integer floor division (what on-chain settlement math does)
+        // floors it to 0. This is the exact discrepancy ISSUE-BE-02 reports.
+        assert_eq!(apply_rate(1, 0.5), 0);
+    }
+
+    #[test]
+    fn round_trips_on_exact_values() {
+        let rate = 1650.25;
+        let receive = apply_rate(1_000, rate);
+        assert_eq!(receive, 1_650_250);
+        assert_eq!(invert_rate(receive, rate), 1_000);
+    }
+
+    #[test]
+    fn deterministic_across_repeated_calls() {
+        let (amount, rate) = (123_456_i64, 1234.5678_f64);
+        let first = apply_rate(amount, rate);
+        for _ in 0..1_000 {
+            assert_eq!(apply_rate(amount, rate), first);
+        }
+    }
+}
