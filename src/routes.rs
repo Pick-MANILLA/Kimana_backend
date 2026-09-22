@@ -8,7 +8,16 @@ pub fn session_routes() -> Router<AppState> {
     Router::new().route("/session", get(get_session))
 }
 
-async fn get_session(session: Session) -> Json<SessionResponse> {
+#[utoipa::path(
+    get,
+    path = "/session",
+    tag = "auth",
+    responses(
+        (status = 200, description = "Current session", body = SessionResponse),
+        (status = 401, description = "Not authenticated"),
+    )
+)]
+pub(crate) async fn get_session(session: Session) -> Json<SessionResponse> {
     Json(SessionResponse {
         user_id: session.user_id.to_string(),
         role: session.role,

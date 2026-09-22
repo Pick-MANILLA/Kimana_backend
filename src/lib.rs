@@ -20,6 +20,27 @@ use axum::{Json, Router};
 use serde_json::json;
 use state::AppState;
 use tower_http::cors::{AllowOrigin, CorsLayer};
+use utoipa::OpenApi;
+use utoipa_swagger_ui::SwaggerUi;
+
+#[derive(OpenApi)]
+#[openapi(
+    paths(
+        routes::get_session,
+        domain::auth::routes::register,
+        domain::auth::routes::login,
+        domain::auth::routes::logout,
+    ),
+    components(schemas(
+        contract::auth::SessionResponse,
+        domain::auth::routes::RegisterBody,
+        domain::auth::routes::LoginBody,
+    )),
+    tags(
+        (name = "auth", description = "Registration, login, session and logout")
+    )
+)]
+struct ApiDoc;
 
 pub fn build_app(state: AppState) -> Router {
     let origins: Vec<HeaderValue> = state
@@ -49,6 +70,7 @@ pub fn build_app(state: AppState) -> Router {
         .allow_credentials(true);
 
     Router::new()
+        .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()))
         .route("/health", get(|| async { Json(json!({ "ok": true })) }))
         .merge(routes::session_routes())
         .merge(domain::auth::routes())

@@ -10,6 +10,7 @@ use axum::{Json, Router};
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 use serde::Deserialize;
 use time::Duration;
+use utoipa::ToSchema;
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -49,16 +50,27 @@ fn to_response(session: crate::http::Session) -> SessionResponse {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
-struct RegisterBody {
+pub(crate) struct RegisterBody {
     email: String,
     password: String,
     display_name: String,
     legal_name: String,
 }
 
-async fn register(
+#[utoipa::path(
+    post,
+    path = "/register",
+    tag = "auth",
+    request_body = RegisterBody,
+    responses(
+        (status = 201, description = "Account created", body = SessionResponse),
+        (status = 400, description = "Validation error"),
+        (status = 409, description = "Email already registered"),
+    )
+)]
+pub(crate) async fn register(
     State(state): State<AppState>,
     jar: CookieJar,
     Body(body): Body<RegisterBody>,
@@ -82,14 +94,24 @@ async fn register(
     ))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
-struct LoginBody {
+pub(crate) struct LoginBody {
     email: String,
     password: String,
 }
 
-async fn login(
+#[utoipa::path(
+    post,
+    path = "/login",
+    tag = "auth",
+    request_body = LoginBody,
+    responses(
+        (status = 200, description = "Authenticated", body = SessionResponse),
+        (status = 401, description = "Invalid credentials"),
+    )
+)]
+pub(crate) async fn login(
     State(state): State<AppState>,
     jar: CookieJar,
     Body(body): Body<LoginBody>,
@@ -99,7 +121,15 @@ async fn login(
     Ok((jar, Json(to_response(authenticated.session))))
 }
 
-async fn logout(
+#[utoipa::path(
+    post,
+    path = "/logout",
+    tag = "auth",
+    responses(
+        (status = 204, description = "Session cleared"),
+    )
+)]
+pub(crate) async fn logout(
     State(state): State<AppState>,
     jar: CookieJar,
 ) -> ApiResult<(CookieJar, StatusCode)> {
