@@ -153,6 +153,13 @@ pub async fn create_transfer(
         .retryable(true));
     };
 
+    if !quote::try_consume(&mut tx, quote.id, transfer_id).await? {
+        tx.rollback().await?;
+        return Err(ApiError::conflict(
+            "This quote has already been accepted by another transfer.",
+        ));
+    }
+
     repo::append_history(&mut tx, transfer_id, TransferStatus::Created, None, None).await?;
     write_audit(
         &mut tx,

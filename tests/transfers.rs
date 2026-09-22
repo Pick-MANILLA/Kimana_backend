@@ -275,6 +275,36 @@ async fn concurrent_creates_cannot_jointly_exceed_aggregate_limit() {
 
 #[tokio::test]
 #[file_serial]
+async fn concurrent_creates_with_same_quote_reject_duplicate() {
+    let app = TestApp::new().await;
+    let quote = fresh_quote(&app).await;
+
+    let (a, b) = tokio::join!(
+        app.post(
+            "/transfers",
+            json!({ "idempotencyKey": "idem-key-0012", "quoteId": quote["id"], "recipientId": RECIPIENT }),
+        ),
+        app.post(
+            "/transfers",
+            json!({ "idempotencyKey": "idem-key-0013", "quoteId": quote["id"], "recipientId": RECIPIENT }),
+        ),
+    );
+
+    let mut statuses = [a.0, b.0];
+    statuses.sort();
+    assert_eq!(statuses, [StatusCode::CREATED, StatusCode::CONFLICT]);
+
+    let n = app
+        .scalar_i64(&format!(
+            "select count(*)::bigint from transfers where quote_snapshot->>'id' = '{}'",
+            quote["id"].as_str().unwrap()
+        ))
+        .await;
+    assert_eq!(n, 1);
+}
+
+#[tokio::test]
+#[file_serial]
 async fn dashboard_stats_come_from_transfers_table() {
     let app = TestApp::new().await;
     let (_, overview) = app.get("/dashboard/overview").await;

@@ -77,6 +77,29 @@ pub async fn find_by_id(pool: &PgPool, id: &str) -> ApiResult<Option<StoredQuote
     row.map(QuoteRow::into_stored).transpose()
 }
 
+/// Atomically claims `quote_id` for `transfer_id`. Returns false when
+/// another transfer already claimed it — a concurrent create_transfer race
+/// on the same quote_id — in which case the caller must roll back and
+/// reject with 409 Conflict rather than leave a transfer that can never
+/// settle.
+pub async fn try_consume(
+    conn: &mut sqlx::PgConnection,
+    quote_id: Uuid,
+    transfer_id: Uuid,
+) -> ApiResult<bool> {
+    let rows_affected = sqlx::query(
+        "update quotes
+            set consumed_by_transfer_id = $2
+          where id = $1 and consumed_by_transfer_id is null",
+    )
+    .bind(quote_id)
+    .bind(transfer_id)
+    .execute(conn)
+    .await?
+    .rows_affected();
+    Ok(rows_affected > 0)
+}
+
 // ---- request body ----
 
 #[derive(Deserialize)]
