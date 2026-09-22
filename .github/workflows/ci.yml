@@ -1,0 +1,117 @@
+name: Backend CI & Security
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  DATABASE_URL: postgres://kimana:kimana@localhost:5432/kimana
+  RUST_LOG: info,sqlx=warn
+
+jobs:
+  # 1. Dependency & Supply Chain Security Audit
+  security-audit:
+    name: Security & Dependency Audit (RustSec)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Cargo Audit
+        uses: rustsec/audit-check@v2.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  # 2. Linting & Static Code Analysis
+  lint:
+    name: Formatting & Clippy Lints
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: Kimana_backend
+
+      - name: Check Formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run Clippy Linter
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Verify No Unsafe Code
+        run: |
+          echo "Scanning for unsafe blocks in src/..."
+          if grep -rn "unsafe " src/; then
+            echo "ERROR: Found unsafe block in Kimana_backend source code."
+            exit 1
+          fi
+          echo "Zero unsafe blocks detected."
+
+  # 3. Database Migrations & Automated Test Suite
+  test:
+    name: Tests & Migrations (PostgreSQL 16)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: kimana
+          POSTGRES_PASSWORD: kimana
+          POSTGRES_DB: kimana
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: Kimana_backend
+
+      - name: Run Database Migrations
+        run: cargo run --bin migrate
+
+      - name: Run Database Seed Script
+        run: cargo run --bin seed
+
+      - name: Run Test Suite
+        run: cargo test --all -- --nocapture
+
+  # 4. Release Build Verification
+  build:
+    name: Release Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: Kimana_backend
+
+      - name: Compile Release Binaries
+        run: cargo build --release --all-targets
