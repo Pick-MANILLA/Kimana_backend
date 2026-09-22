@@ -63,14 +63,32 @@ impl QuoteRow {
     }
 }
 
-const COLS: &str = "id, customer_id, send_currency, receive_currency, rate, fee_minor,
-                    send_amount_minor, receive_amount_minor, issued_at, expires_at";
+/// Columns every read/write below selects or returns. A macro (not a `const
+/// &str`) so `concat!` can splice it into each full query as a compile-time
+/// string literal — see ISSUE-BE-06: no runtime `format!` for SQL text, only
+/// static strings with `$n` bind parameters.
+macro_rules! quote_cols {
+    () => {
+        "id, customer_id, send_currency, receive_currency, rate, fee_minor,
+                    send_amount_minor, receive_amount_minor, issued_at, expires_at"
+    };
+}
+
+const SELECT_BY_ID: &str = concat!("select ", quote_cols!(), " from quotes where id = $1");
+const INSERT_QUOTE: &str = concat!(
+    "insert into quotes
+       (customer_id, send_currency, receive_currency, rate, fee_minor,
+        send_amount_minor, receive_amount_minor, expires_at)
+     values ($1, $2, $3, $4, 0, $5, $6, now() + ($7 || ' seconds')::interval)
+     returning ",
+    quote_cols!()
+);
 
 pub async fn find_by_id(pool: &PgPool, id: &str) -> ApiResult<Option<StoredQuote>> {
     if !is_uuid(id) {
         return Ok(None);
     }
-    let row: Option<QuoteRow> = sqlx::query_as(&format!("select {COLS} from quotes where id = $1"))
+    let row: Option<QuoteRow> = sqlx::query_as(SELECT_BY_ID)
         .bind(Uuid::parse_str(id).unwrap())
         .fetch_optional(pool)
         .await?;
@@ -125,31 +143,6 @@ fn derive_amounts(field: QuoteAmountField, amount_minor: i64, rate: f64) -> (i64
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn no_float_round_in_money_math() {
-        // Same boundary case as util::rate_math_tests::floors_instead_of_rounding_half_up,
-        // exercised through derive_amounts directly.
-        let (_, receive) = derive_amounts(QuoteAmountField::Send, 1, 0.5);
-        assert_eq!(receive, 0, "must floor, not round, a .5 fractional product");
-    }
-
-    #[test]
-    fn send_and_receive_fields_are_inverses() {
-        let rate = 1645.2;
-        let (send, receive) = derive_amounts(QuoteAmountField::Send, 4_500_000, rate);
-        assert_eq!(send, 4_500_000);
-        assert_eq!(receive, 7_403_400_000);
-
-        let (send2, receive2) = derive_amounts(QuoteAmountField::Receive, receive, rate);
-        assert_eq!(receive2, receive);
-        assert_eq!(send2, send);
-    }
-}
-
 async fn request_firm_quote(
     state: &AppState,
     session: &Session,
@@ -181,22 +174,16 @@ async fn request_firm_quote(
     let (send_minor, receive_minor) =
         derive_amounts(body.amount_field, body.amount.amount_minor, indicative.rate);
 
-    let row: QuoteRow = sqlx::query_as(&format!(
-        "insert into quotes
-           (customer_id, send_currency, receive_currency, rate, fee_minor,
-            send_amount_minor, receive_amount_minor, expires_at)
-         values ($1, $2, $3, $4, 0, $5, $6, now() + ($7 || ' seconds')::interval)
-         returning {COLS}"
-    ))
-    .bind(session.customer_id)
-    .bind(send.as_str())
-    .bind(receive.as_str())
-    .bind(indicative.rate)
-    .bind(send_minor)
-    .bind(receive_minor)
-    .bind(state.config.quote_ttl_seconds.to_string())
-    .fetch_one(&state.pool)
-    .await?;
+    let row: QuoteRow = sqlx::query_as(INSERT_QUOTE)
+        .bind(session.customer_id)
+        .bind(send.as_str())
+        .bind(receive.as_str())
+        .bind(indicative.rate)
+        .bind(send_minor)
+        .bind(receive_minor)
+        .bind(state.config.quote_ttl_seconds.to_string())
+        .fetch_one(&state.pool)
+        .await?;
 
     Ok(row.into_stored()?.firm_quote)
 }
@@ -214,4 +201,29 @@ async fn create(
 ) -> ApiResult<(StatusCode, Json<FirmQuote>)> {
     let quote = request_firm_quote(&state, &session, body).await?;
     Ok((StatusCode::CREATED, Json(quote)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn no_float_round_in_money_math() {
+        // Same boundary case as util::rate_math_tests::floors_instead_of_rounding_half_up,
+        // exercised through derive_amounts directly.
+        let (_, receive) = derive_amounts(QuoteAmountField::Send, 1, 0.5);
+        assert_eq!(receive, 0, "must floor, not round, a .5 fractional product");
+    }
+
+    #[test]
+    fn send_and_receive_fields_are_inverses() {
+        let rate = 1645.2;
+        let (send, receive) = derive_amounts(QuoteAmountField::Send, 4_500_000, rate);
+        assert_eq!(send, 4_500_000);
+        assert_eq!(receive, 7_403_400_000);
+
+        let (send2, receive2) = derive_amounts(QuoteAmountField::Receive, receive, rate);
+        assert_eq!(receive2, receive);
+        assert_eq!(send2, send);
+    }
 }

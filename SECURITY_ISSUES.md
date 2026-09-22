@@ -234,6 +234,8 @@ In `src/lib.rs`, the router applies `DefaultBodyLimit::max(12 * 1024 * 1024)` gl
 
 ### ISSUE-BE-06: Remediate Dynamic SQL String Formatting in Repository Queries
 
+**Status:** ✅ Every `format!`-built SQL string in `src/domain/transfers/repo.rs` and `src/domain/quote.rs` is now a `const &str` built at compile time via `concat!` over a `macro_rules!` fragment (`transfer_select!`/`quote_cols!`), instead of a runtime `format!` call. No SQL text is assembled at runtime anymore; every user-supplied value still only ever reaches the query through `.bind(...)`, exactly as before — this was never a real injection path (the interpolated pieces were always internal `const` literals), so the fix is about removing the anti-pattern the issue calls out, not about closing an actual injection. Full test suite (79 tests) still passes.
+
 **Priority:** Low (P3)  
 **Labels:** `security`, `database`, `sqlx`  
 **Files:** `src/domain/transfers/repo.rs`, `src/domain/quote.rs`  

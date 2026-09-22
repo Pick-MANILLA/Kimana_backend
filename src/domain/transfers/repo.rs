@@ -107,7 +107,13 @@ impl TransferRow {
     }
 }
 
-const SELECT: &str = "
+/// Common `from`/`join` clause every read below selects against. A macro
+/// (not a `const &str`) so `concat!` can splice it into each full query as a
+/// compile-time string literal — see ISSUE-BE-06: no runtime `format!` for
+/// SQL text, only static strings with `$n` bind parameters.
+macro_rules! transfer_select {
+    () => {
+        "
     select t.*,
            h.entered_at as state_entered_at,
            h.payload    as state_payload
@@ -116,13 +122,29 @@ const SELECT: &str = "
         select entered_at, payload from transfer_state_history
          where transfer_id = t.id order by position desc limit 1
       ) h on true
-";
+"
+    };
+}
+
+const SELECT_BY_ID: &str = concat!(transfer_select!(), " where t.id = $1");
+const SELECT_BY_IDEMPOTENCY_KEY: &str = concat!(
+    transfer_select!(),
+    " where t.customer_id = $1 and t.idempotency_key = $2"
+);
+const SELECT_BY_CUSTOMER_AND_STATUS: &str = concat!(
+    transfer_select!(),
+    " where t.customer_id = $1 and t.current_status = $2 order by t.created_at desc"
+);
+const SELECT_BY_CUSTOMER: &str = concat!(
+    transfer_select!(),
+    " where t.customer_id = $1 order by t.created_at desc"
+);
 
 pub async fn find_by_id(pool: &PgPool, id: &str) -> ApiResult<Option<Transfer>> {
     if !is_uuid(id) {
         return Ok(None);
     }
-    let row: Option<TransferRow> = sqlx::query_as(&format!("{SELECT} where t.id = $1"))
+    let row: Option<TransferRow> = sqlx::query_as(SELECT_BY_ID)
         .bind(Uuid::parse_str(id).unwrap())
         .fetch_optional(pool)
         .await?;
@@ -130,7 +152,7 @@ pub async fn find_by_id(pool: &PgPool, id: &str) -> ApiResult<Option<Transfer>> 
 }
 
 pub async fn find_by_id_uuid(pool: &PgPool, id: Uuid) -> ApiResult<Option<Transfer>> {
-    let row: Option<TransferRow> = sqlx::query_as(&format!("{SELECT} where t.id = $1"))
+    let row: Option<TransferRow> = sqlx::query_as(SELECT_BY_ID)
         .bind(id)
         .fetch_optional(pool)
         .await?;
@@ -142,13 +164,11 @@ pub async fn find_by_idempotency_key(
     customer_id: Uuid,
     key: &str,
 ) -> ApiResult<Option<Transfer>> {
-    let row: Option<TransferRow> = sqlx::query_as(&format!(
-        "{SELECT} where t.customer_id = $1 and t.idempotency_key = $2"
-    ))
-    .bind(customer_id)
-    .bind(key)
-    .fetch_optional(pool)
-    .await?;
+    let row: Option<TransferRow> = sqlx::query_as(SELECT_BY_IDEMPOTENCY_KEY)
+        .bind(customer_id)
+        .bind(key)
+        .fetch_optional(pool)
+        .await?;
     row.map(TransferRow::into_contract).transpose()
 }
 
@@ -159,21 +179,17 @@ pub async fn list_by_customer(
 ) -> ApiResult<Vec<Transfer>> {
     let rows: Vec<TransferRow> = match status {
         Some(s) => {
-            sqlx::query_as(&format!(
-                "{SELECT} where t.customer_id = $1 and t.current_status = $2 order by t.created_at desc"
-            ))
-            .bind(customer_id)
-            .bind(s.as_str())
-            .fetch_all(pool)
-            .await?
+            sqlx::query_as(SELECT_BY_CUSTOMER_AND_STATUS)
+                .bind(customer_id)
+                .bind(s.as_str())
+                .fetch_all(pool)
+                .await?
         }
         None => {
-            sqlx::query_as(&format!(
-                "{SELECT} where t.customer_id = $1 order by t.created_at desc"
-            ))
-            .bind(customer_id)
-            .fetch_all(pool)
-            .await?
+            sqlx::query_as(SELECT_BY_CUSTOMER)
+                .bind(customer_id)
+                .fetch_all(pool)
+                .await?
         }
     };
     rows.into_iter().map(TransferRow::into_contract).collect()
