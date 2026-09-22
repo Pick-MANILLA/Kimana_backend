@@ -1,7 +1,7 @@
 //! Firm quotes.
 
 use crate::contract::common::{CurrencyCode, Money};
-use crate::contract::quote::{CostBreakdown, FirmQuote, QuoteAmountField};
+use crate::contract::quote::{CostBreakdown, FirmQuote, QuoteAmountField, RateSource};
 use crate::domain::fx;
 use crate::error::{ApiError, ApiResult};
 use crate::http::{Body, Session};
@@ -50,6 +50,11 @@ impl QuoteRow {
                 fee: Money::new(self.fee_minor, send),
                 send_amount: Money::new(self.send_amount_minor, send),
                 receive_amount: Money::new(self.receive_amount_minor, receive),
+                // The `quotes` table doesn't persist which source produced
+                // the rate — only `request_firm_quote`, at creation time,
+                // knows that (and sets it directly on the value it returns,
+                // not through this reconstruction path).
+                source: RateSource::default(),
             },
             issued_at: iso(self.issued_at),
             expires_at: iso(self.expires_at),
@@ -185,7 +190,9 @@ async fn request_firm_quote(
         .fetch_one(&state.pool)
         .await?;
 
-    Ok(row.into_stored()?.firm_quote)
+    let mut firm_quote = row.into_stored()?.firm_quote;
+    firm_quote.breakdown.source = indicative.source;
+    Ok(firm_quote)
 }
 
 // ---- routes ----

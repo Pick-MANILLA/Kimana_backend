@@ -8,8 +8,10 @@
 //! second feed replaces `SecondaryProvider::get_rate`'s query without
 //! touching callers.
 
+use crate::config::Config;
 use crate::contract::common::CurrencyCode;
-use crate::contract::quote::IndicativeRate;
+use crate::contract::quote::{IndicativeRate, RateSource};
+use crate::domain::resilience::{CallError, CircuitBreaker};
 use crate::error::{ApiError, ApiResult};
 use crate::state::AppState;
 use crate::util::iso;
@@ -20,7 +22,10 @@ use chrono::{DateTime, Utc};
 use rand::Rng;
 use serde::Deserialize;
 use sqlx::PgPool;
+use std::collections::HashMap;
 use std::future::Future;
+use std::sync::Mutex as StdMutex;
+use std::time::{Duration, Instant};
 
 const JITTER_SPREAD: f64 = 0.004;
 const SECONDARY_JITTER_SPREAD: f64 = 0.006;
@@ -194,6 +199,7 @@ struct FxRow {
     as_of: DateTime<Utc>,
 }
 
+#[derive(Clone)]
 pub struct Rate {
     pub rate: f64,
     pub change_percent_24h: f64,
@@ -238,25 +244,152 @@ pub async fn current_rate(pool: &PgPool, pair: &str, jitter: bool) -> ApiResult<
     }))
 }
 
+/// Outcome of asking `FxResilience` for a pair's rate: whether it came
+/// straight from the primary feed, is a cached fallback served because that
+/// feed is currently failing, or the pair simply isn't configured at all
+/// (not a resilience concern — the feed answered fine, it just has nothing
+/// for this pair, so this never touches the circuit breaker or the cache).
+enum RateOutcome {
+    Live(Rate),
+    CachedProvisional(Rate),
+    NotFound,
+}
+
+struct CachedRate {
+    rate: Rate,
+    cached_at: Instant,
+}
+
+/// Wraps the primary FX feed in a circuit breaker plus a last-known-good
+/// rate cache per pair (ISSUE-BE-09): a lone transient failure still gets
+/// served (from cache, or by letting the call through since the breaker
+/// isn't open yet); sustained failure trips the breaker and callers get a
+/// structured `PARTNER_UNAVAILABLE`-style error once the cache goes stale.
+pub struct FxResilience {
+    breaker: CircuitBreaker,
+    cache: StdMutex<HashMap<String, CachedRate>>,
+    max_cache_age: Duration,
+    call_timeout: Duration,
+}
+
+impl FxResilience {
+    pub fn new(
+        failure_threshold: u32,
+        reset_timeout: Duration,
+        max_cache_age: Duration,
+        call_timeout: Duration,
+    ) -> Self {
+        Self {
+            breaker: CircuitBreaker::new(failure_threshold, reset_timeout),
+            cache: StdMutex::new(HashMap::new()),
+            max_cache_age,
+            call_timeout,
+        }
+    }
+
+    pub fn from_config(config: &Config) -> Self {
+        Self::new(
+            config.fx_breaker_failure_threshold,
+            Duration::from_secs(config.fx_breaker_reset_seconds),
+            Duration::from_secs(config.fx_cache_max_age_seconds),
+            Duration::from_millis(config.fx_call_timeout_ms),
+        )
+    }
+
+    async fn resolve<F, Fut>(&self, pair: &str, fetch: F) -> ApiResult<RateOutcome>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = ApiResult<Option<Rate>>>,
+    {
+        // A hung/slow call must count as a failure on its own schedule, not
+        // whenever the outer request timeout eventually fires — otherwise
+        // the breaker never gets a chance to react to it at all.
+        let timeout = self.call_timeout;
+        let timed_fetch = || async move {
+            match tokio::time::timeout(timeout, fetch()).await {
+                Ok(result) => result,
+                Err(_) => Err(ApiError::new(
+                    crate::error::ErrorCode::PartnerFailure,
+                    format!("fx feed call exceeded {}ms", timeout.as_millis()),
+                )),
+            }
+        };
+
+        match self.breaker.call(timed_fetch).await {
+            Ok(Some(rate)) => {
+                self.cache.lock().unwrap().insert(
+                    pair.to_string(),
+                    CachedRate {
+                        rate: rate.clone(),
+                        cached_at: Instant::now(),
+                    },
+                );
+                Ok(RateOutcome::Live(rate))
+            }
+            Ok(None) => Ok(RateOutcome::NotFound),
+            Err(outcome) => {
+                let retry_after = match &outcome {
+                    CallError::Open { retry_after } => *retry_after,
+                    CallError::Failed(err) => {
+                        tracing::warn!(pair, error = %err, "fx primary feed failed; trying cached fallback");
+                        Duration::ZERO
+                    }
+                };
+                let cached = self
+                    .cache
+                    .lock()
+                    .unwrap()
+                    .get(pair)
+                    .map(|c| (c.rate.clone(), c.cached_at.elapsed()));
+                match cached {
+                    Some((rate, age)) if age <= self.max_cache_age => {
+                        Ok(RateOutcome::CachedProvisional(rate))
+                    }
+                    _ => Err(ApiError::partner_unavailable(pair, retry_after)),
+                }
+            }
+        }
+    }
+}
+
 pub async fn get_indicative_rate(
     state: &AppState,
     send: CurrencyCode,
     receive: CurrencyCode,
 ) -> ApiResult<IndicativeRate> {
     let pair = pair_key(send, receive);
-    let rate = current_rate(&state.pool, &pair, !state.config.is_test)
-        .await?
-        .ok_or_else(|| ApiError::validation(format!("No rate available for {pair}.")))?;
+    let jitter = !state.config.is_test;
+    let outcome = state
+        .fx_resilience
+        .resolve(&pair, || current_rate(&state.pool, &pair, jitter))
+        .await?;
 
-    if !state.config.is_test {
-        jitter_secondary(&state.pool, &pair).await?;
+    let (rate, source) = match outcome {
+        RateOutcome::NotFound => {
+            return Err(ApiError::validation(format!("No rate available for {pair}.")));
+        }
+        RateOutcome::Live(rate) => (rate, RateSource::Live),
+        RateOutcome::CachedProvisional(rate) => (rate, RateSource::CachedProvisional),
+    };
+
+    match source {
+        RateSource::Live => {
+            if !state.config.is_test {
+                jitter_secondary(&state.pool, &pair).await?;
+            }
+            check_divergence(
+                &state.pool,
+                &pair,
+                state.config.fx_divergence_threshold_percent,
+            )
+            .await?;
+        }
+        RateSource::CachedProvisional => {
+            // The primary DB is the same store the secondary-provider jitter
+            // and divergence check would hit too — both would just fail the
+            // same way, defeating the fallback. Skip them.
+        }
     }
-    check_divergence(
-        &state.pool,
-        &pair,
-        state.config.fx_divergence_threshold_percent,
-    )
-    .await?;
 
     Ok(IndicativeRate {
         send_currency: send,
@@ -264,6 +397,7 @@ pub async fn get_indicative_rate(
         rate: rate.rate,
         change_percent_24h: rate.change_percent_24h,
         as_of: rate.as_of,
+        source,
     })
 }
 

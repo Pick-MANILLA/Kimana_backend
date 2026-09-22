@@ -4,17 +4,13 @@
 
 use kimana_backend::domain::onboarding::service::rescreen_approved_customers;
 use kimana_backend::{config::Config, db, state::AppState};
-use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
     let config = Config::from_env();
     let pool = db::connect(&config.database_url).await?;
-    let state = AppState {
-        pool,
-        config: Arc::new(config),
-    };
+    let state = AppState::new(pool, config);
 
     let outcomes = rescreen_approved_customers(&state).await?;
     for outcome in &outcomes {

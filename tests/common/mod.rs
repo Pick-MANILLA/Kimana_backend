@@ -8,7 +8,7 @@ use http_body_util::BodyExt;
 use kimana_backend::{build_app, config::Config, db, http::SESSION_COOKIE_NAME, seed, state::AppState};
 use serde_json::Value;
 use sqlx::PgPool;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use tower::ServiceExt;
 
 pub struct TestApp {
@@ -26,10 +26,7 @@ impl TestApp {
             .expect("connect to test database (is Postgres up?)");
         db::run_migrations(&pool).await.expect("migrations");
         seed::seed(&pool).await.expect("seed");
-        let state = AppState {
-            pool: pool.clone(),
-            config: Arc::new(config),
-        };
+        let state = AppState::new(pool.clone(), config);
         let app = TestApp {
             app: build_app(state.clone()),
             pool,

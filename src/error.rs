@@ -3,6 +3,7 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde::Serialize;
 use serde_json::json;
+use std::time::Duration;
 
 /// Mirrors the frontend's `ApiErrorCode` union. See docs/backend-plan.md §02.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -92,6 +93,18 @@ impl ApiError {
     }
     pub fn compliance_hold(message: impl Into<String>) -> Self {
         ApiError::new(ErrorCode::ComplianceHold, message)
+    }
+    /// The primary feed for `corridor` is down and there's no fresh-enough
+    /// cached rate to fall back to (see `domain::resilience::CircuitBreaker`,
+    /// ISSUE-BE-09). `retry_after` is the breaker's remaining cooldown, if
+    /// it's the one that rejected the call — zero when the underlying fetch
+    /// simply errored instead of the breaker fast-failing it.
+    pub fn partner_unavailable(corridor: &str, retry_after: Duration) -> Self {
+        let secs = retry_after.as_secs().max(1);
+        ApiError::new(
+            ErrorCode::PartnerFailure,
+            format!("Rate feed for {corridor} is temporarily unavailable. Try again in about {secs}s."),
+        )
     }
     pub fn server_error() -> Self {
         ApiError::new(

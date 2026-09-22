@@ -147,6 +147,7 @@ fn snapshot_quote(t: &SeedTransfer) -> FirmQuote {
             fee: crate::contract::common::Money::new(0, send),
             send_amount: crate::contract::common::Money::new(t.send_minor, send),
             receive_amount: crate::contract::common::Money::new(t.recv_minor, receive),
+            source: crate::contract::quote::RateSource::Live,
         },
         issued_at: "2026-08-20T09:00:00.000Z".into(),
         expires_at: "2026-08-20T09:01:30.000Z".into(),

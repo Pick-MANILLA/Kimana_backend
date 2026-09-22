@@ -36,6 +36,23 @@ pub struct Config {
     /// rates for a pair above which a divergence alert is recorded.
     pub fx_divergence_threshold_percent: f64,
 
+    /// Consecutive primary-feed failures before the FX circuit breaker trips
+    /// open and starts failing fast instead of hammering a down dependency
+    /// (`domain::resilience::CircuitBreaker`, ISSUE-BE-09).
+    pub fx_breaker_failure_threshold: u32,
+    /// How long the FX breaker stays open before letting one trial call
+    /// through to test whether the feed has recovered.
+    pub fx_breaker_reset_seconds: u64,
+    /// Max age of a cached rate the FX breaker's fallback will still serve
+    /// as `cachedProvisional` while the primary feed is down.
+    pub fx_cache_max_age_seconds: u64,
+    /// Per-call timeout the FX breaker applies to the primary feed fetch. A
+    /// hung/slow call (not just an outright error) counts as a failure once
+    /// this elapses — without it, a stalled DB/partner connection would just
+    /// block until the outer request timeout fires, and the breaker would
+    /// never see a failure to react to.
+    pub fx_call_timeout_ms: u64,
+
     /// True under integration tests: disables FX jitter and other nondeterminism.
     pub is_test: bool,
 
@@ -84,6 +101,10 @@ impl Config {
             max_aggregate_exposure_minor: num("MAX_AGGREGATE_EXPOSURE_MINOR", 20_000_000),
             compliance_amount_threshold_minor: num("COMPLIANCE_AMOUNT_THRESHOLD_MINOR", 5_000_000),
             fx_divergence_threshold_percent: num("FX_DIVERGENCE_THRESHOLD_PERCENT", 1.0),
+            fx_breaker_failure_threshold: num("FX_BREAKER_FAILURE_THRESHOLD", 3),
+            fx_breaker_reset_seconds: num("FX_BREAKER_RESET_SECONDS", 10),
+            fx_cache_max_age_seconds: num("FX_CACHE_MAX_AGE_SECONDS", 300),
+            fx_call_timeout_ms: num("FX_CALL_TIMEOUT_MS", 2_000),
             is_test: false,
             cookie_secure: num("COOKIE_SECURE", true),
         }

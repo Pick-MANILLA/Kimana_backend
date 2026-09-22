@@ -5,5 +5,6 @@ pub mod ledger;
 pub mod onboarding;
 pub mod quote;
 pub mod recipients;
+pub mod resilience;
 pub mod screening;
 pub mod transfers;

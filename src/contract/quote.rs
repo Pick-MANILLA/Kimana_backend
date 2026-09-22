@@ -1,6 +1,18 @@
 use super::common::{CurrencyCode, Money};
 use serde::{Deserialize, Serialize};
 
+/// Whether a rate came straight from the primary feed or is a cached
+/// fallback served while that feed is down (`domain::resilience`,
+/// ISSUE-BE-09). `#[default]` is `Live` so historical `quote_snapshot` JSONB
+/// rows from before this field existed still deserialize correctly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum RateSource {
+    #[default]
+    Live,
+    CachedProvisional,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IndicativeRate {
@@ -9,6 +21,8 @@ pub struct IndicativeRate {
     pub rate: f64,
     pub change_percent_24h: f64,
     pub as_of: String,
+    #[serde(default)]
+    pub source: RateSource,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -18,6 +32,8 @@ pub struct CostBreakdown {
     pub fee: Money,
     pub send_amount: Money,
     pub receive_amount: Money,
+    #[serde(default)]
+    pub source: RateSource,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

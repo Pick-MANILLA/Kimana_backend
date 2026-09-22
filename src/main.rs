@@ -1,5 +1,4 @@
 use kimana_backend::{build_app, config::Config, db, state::AppState};
-use std::sync::Arc;
 use tokio::net::TcpListener;
 
 #[tokio::main]
@@ -17,10 +16,7 @@ async fn main() -> anyhow::Result<()> {
     db::run_migrations(&pool).await?;
 
     let addr = format!("{}:{}", config.host, config.port);
-    let state = AppState {
-        pool,
-        config: Arc::new(config),
-    };
+    let state = AppState::new(pool, config);
     let app = build_app(state);
 
     let listener = TcpListener::bind(&addr).await?;

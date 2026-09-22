@@ -2084,3 +2084,31 @@ Without rate limiting, a single misbehaving client can degrade the service for a
 - [ ] `GET /health` and `GET /rates/indicative` are not blocked by the tight rate limit.
 - [ ] Integration tests are not affected (rate limiting disabled in test config).
 - [ ] `429` responses include a `Retry-After` header indicating when the client may retry.
+
+---
+
+### ISSUE-51: No circuit breaker or fallback caching around the FX rate feed
+
+**Status:** ✅ Resolved. `domain::resilience::CircuitBreaker` is a generic, dependency-agnostic breaker (Closed → Open → HalfOpen state machine, unit-tested in isolation) wrapping any fallible async call — built as reusable scaffolding for a future real partner/HTTP integration, not just today's DB-backed FX mock. `domain::fx::FxResilience` wraps the primary rate fetch with it plus a per-pair in-memory last-known-good cache: a lone failure (or a hung/slow call — each attempt gets its own `FX_CALL_TIMEOUT_MS`, default 2s, so a stalled connection can't just block until the outer request timeout) serves the cached rate tagged `"source": "cachedProvisional"` in both `GET /rates/indicative` and `POST /quotes`; repeated failures trip the breaker to fail fast; a stale-or-missing cache returns a structured `PARTNER_FAILURE` (`502`, `retryable: true`, with an estimated retry time). Verified live against the real running server (paused/stopped the Postgres container mid-request): cold cache + outage → `502 PARTNER_FAILURE` in ~2s (not the old ~15s hang into a generic error); warm cache + a single blip → transparent `200` with `source: cachedProvisional`; sustained failures → fast-fail once the breaker opens, including a failed half-open trial re-opening it immediately.
+
+**Note on scope vs. the original ask:** this issue named `src/http/handlers/quote.rs`, which doesn't exist — the quote route lives in `src/domain/quote.rs`. It also assumed a real external FX/partner API; there isn't one yet (`domain::fx.rs` is an explicitly-documented seeded-DB mock, no `reqwest`/HTTP client dependency anywhere). Per explicit direction, this was built as real, reusable resilience scaffolding (`CircuitBreaker` is fully generic) rather than skipped or narrowly special-cased to the mock — so it's ready to wrap a real feed later with no interface changes at the call site.
+
+**Priority:** P2
+**Label:** resilience
+**Files:** `src/domain/resilience.rs`, `src/domain/fx.rs`, `src/contract/quote.rs`, `src/domain/quote.rs`, `src/config.rs`, `src/state.rs`
+
+#### What the issue is
+
+If the FX rate feed drops offline (or just stalls), quote generation immediately surfaces an error to the caller with no distinction between "this pair doesn't exist" and "the feed is temporarily unavailable," and no attempt to serve a recently-known-good rate for a transient blip.
+
+#### How it was fixed
+
+1. `CircuitBreaker::call` (generic over any `FnOnce() -> Future<Output = Result<T, E>>`) tracks consecutive failures, trips open after a threshold, fails fast while open, and allows a single half-open trial call after a cooldown.
+2. `FxResilience::resolve` wraps the primary feed fetch with a per-call timeout (so a hang counts as a failure promptly), runs it through the breaker, and on any failure falls back to the last cached rate for that pair if it's within `FX_CACHE_MAX_AGE_SECONDS` (default 300s), tagging the response `source: cachedProvisional`.
+3. When the cache is empty or stale, returns `ApiError::partner_unavailable` — `PARTNER_FAILURE`, `502`, `retryable: true`, with an estimated retry time.
+4. `IndicativeRate` and `CostBreakdown` both carry the new `source: RateSource` field (`#[serde(default)]` so it doesn't break deserializing historical stored `quote_snapshot` JSONB rows).
+
+#### Acceptance criteria
+
+- [x] Transient blips (a single failed/slow fetch) do not cause user-facing quote creation errors — served from cache instead.
+- [x] Stale rates beyond tolerance (or no cache at all) return a structured `PARTNER_FAILURE` response with an estimated retry time.
