@@ -200,6 +200,8 @@ In `create_transfer()`, quotes are read from the database, but are not atomicall
 
 ### ISSUE-BE-05: Denial of Service Hardening: Rate Limiting & Timeout Layers
 
+**Status:** ✅ Timeout and route-specific body limits landed (`src/lib.rs`, `src/domain/onboarding/routes.rs`). The default `DefaultBodyLimit` dropped from 12 MB to 128 KB; the document upload route (`POST /onboarding/application/documents` — the issue said `/onboarding/documents`, which doesn't exist) gets its own 12 MB override via `.layer(DefaultBodyLimit::max(...))` on that one route, per axum's documented per-route pattern. A `tower_http::timeout::TimeoutLayer` aborts any request running past 15s with `408`. Verified live: an 8 KB body dripped at 500 B/s returned `408` at 15.0s; a 200 KB JSON body was rejected (`400`, via the existing `Body` extractor's rejection handling — not literally `413`, but rejected as the criterion asks); a 500 KB multipart upload to the document route sailed past the body-limit layer untouched. **Not in scope / still open:** no rate limiting (the issue's title mentions it, but the resolution steps and acceptance criteria only cover timeouts and body limits — flagging in case per-IP/per-session rate limiting was actually wanted too).
+
 **Priority:** Medium (P2)  
 **Labels:** `security`, `dos`, `middleware`  
 **Files:** `src/lib.rs`, `Cargo.toml`  
@@ -225,8 +227,8 @@ In `src/lib.rs`, the router applies `DefaultBodyLimit::max(12 * 1024 * 1024)` gl
 3. Restrict large 12 MB body limits only to the onboarding document upload route (`/onboarding/documents`), and set a default 128 KB body limit for standard JSON endpoints.
 
 #### 3. Acceptance Criteria
-- [ ] Requests hanging beyond 15 seconds terminate with `408 Request Timeout`.
-- [ ] Standard JSON endpoints reject payloads larger than 128 KB.
+- [x] Requests hanging beyond 15 seconds terminate with `408 Request Timeout`.
+- [x] Standard JSON endpoints reject payloads larger than 128 KB.
 
 ---
 

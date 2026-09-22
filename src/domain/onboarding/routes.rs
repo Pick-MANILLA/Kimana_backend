@@ -6,11 +6,16 @@ use crate::contract::onboarding::{
 use crate::error::{ApiError, ApiResult};
 use crate::http::{Body, Session};
 use crate::state::AppState;
-use axum::extract::{Multipart, Path, State};
+use axum::extract::{DefaultBodyLimit, Multipart, Path, State};
 use axum::http::StatusCode;
 use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use serde::Deserialize;
+
+/// Document uploads carry file bytes, so they need more headroom than the
+/// 128 KB default the rest of the JSON API is capped at (see ISSUE-BE-05) —
+/// applied directly to this route so it overrides that default.
+const DOCUMENT_UPLOAD_BODY_LIMIT: usize = 12 * 1024 * 1024;
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -18,7 +23,10 @@ pub fn routes() -> Router<AppState> {
         .route("/onboarding/application/business", put(save_business))
         .route("/onboarding/application/principals", put(save_principals))
         .route("/onboarding/application/submit", post(submit))
-        .route("/onboarding/application/documents", post(upload_document))
+        .route(
+            "/onboarding/application/documents",
+            post(upload_document).layer(DefaultBodyLimit::max(DOCUMENT_UPLOAD_BODY_LIMIT)),
+        )
         .route(
             "/onboarding/application/documents/{id}/retry",
             post(retry_document),

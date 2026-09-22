@@ -14,14 +14,26 @@ pub mod storage;
 pub mod util;
 
 use axum::extract::DefaultBodyLimit;
-use axum::http::{HeaderName, HeaderValue, Method};
+use axum::http::{HeaderName, HeaderValue, Method, StatusCode};
 use axum::routing::get;
 use axum::{Json, Router};
 use serde_json::json;
 use state::AppState;
+use std::time::Duration;
 use tower_http::cors::{AllowOrigin, CorsLayer};
+use tower_http::timeout::TimeoutLayer;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
+
+/// Default cap for standard JSON request bodies (see ISSUE-BE-05). The
+/// document upload route needs more room and sets its own, larger limit —
+/// see `DOCUMENT_UPLOAD_BODY_LIMIT` in `domain::onboarding::routes`.
+const DEFAULT_BODY_LIMIT: usize = 128 * 1024;
+
+/// How long a request may run before the server aborts it with `408 Request
+/// Timeout`, to stop slow clients from tying up a Tokio worker/DB connection
+/// indefinitely (ISSUE-BE-05).
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(OpenApi)]
 #[openapi(
@@ -80,7 +92,11 @@ pub fn build_app(state: AppState) -> Router {
         .merge(domain::recipients::routes())
         .merge(domain::quote::routes())
         .merge(domain::transfers::routes())
-        .layer(DefaultBodyLimit::max(12 * 1024 * 1024))
+        .layer(DefaultBodyLimit::max(DEFAULT_BODY_LIMIT))
+        .layer(TimeoutLayer::with_status_code(
+            StatusCode::REQUEST_TIMEOUT,
+            REQUEST_TIMEOUT,
+        ))
         .layer(cors)
         .with_state(state)
 }
