@@ -38,7 +38,7 @@ sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio",
 thiserror = "2"
 time = { version = "0.3.55", default-features = false }
 tokio = { version = "1", features = ["full"] }
-tower-http = { version = "0.6", features = ["cors", "timeout"] }
+tower-http = { version = "0.6", features = ["cors", "timeout", "request-id"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 utoipa = { version = "5", features = ["axum_extras"] }

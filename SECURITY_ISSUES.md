@@ -14,6 +14,7 @@ This document outlines the actionable security issues and engineering fixes iden
 | **`ISSUE-BE-04`** | **MEDIUM** | `src/domain/transfers` | OWASP A08 (Integrity) | Single quote can be consumed by multiple transfers concurrently. |
 | **`ISSUE-BE-05`** | **MEDIUM** | `src/lib.rs:55` | OWASP A04 (DoS) | Global 12 MB body limit without request timeouts or rate-limiting layers. |
 | **`ISSUE-BE-06`** | **LOW** | `src/domain/*/repo.rs` | OWASP A03 (Injection) | Dynamic string formatting (`format!`) used in SQL queries. |
+| **`ISSUE-BE-07`** | **MEDIUM** | `src/error.rs`, `src/lib.rs` | CWE-209 (Observability) | Error responses carried no request correlation id for support/log cross-referencing. |
 
 ---
 
@@ -252,6 +253,28 @@ While the interpolated constants are currently internal strings, dynamic query g
 2. For dynamic filtering, construct query builders or use structured parameter binding.
 
 #### 3. Acceptance Criteria
-- [ ] No `format!` string construction used for SQL query generation in repository layers.
-- [ ] All database queries utilize static query strings with parameterized bind arguments.
+- [x] No `format!` string construction used for SQL query generation in repository layers.
+- [x] All database queries utilize static query strings with parameterized bind arguments.
+
+---
+
+### ISSUE-BE-07: Attach Opaque `request_id` to All Error Responses and Tracing Spans
+
+**Status:** ✅ `SetRequestIdLayer`/`PropagateRequestIdLayer` (`tower_http::request_id`, `MakeRequestUuid`) assign a UUID per request and put it on the `x-request-id` response header for *every* response (success, business error, even the empty-body `408` from `TimeoutLayer` — verified live). A new `attach_request_id` middleware (`src/lib.rs`) additionally (a) runs the request inside a `tracing::info_span!("request", request_id = ...)`, so any `tracing::error!` anywhere in the call chain — e.g. the `sqlx::Error` log in `error.rs`'s `From` impl — is correlated automatically by the tracing span context, with no change needed to that log call itself, and (b) merges a `requestId` field into JSON error bodies, since `ApiError::into_response` has no access to the request to do that itself. Verified live: a `401` body and its `x-request-id` header carry the identical UUID. **One deliberate deviation from the issue's example:** the JSON field is `requestId` (camelCase), not `request_id` — every other multi-word field in this API's JSON contracts (`contract/*.rs`) is `#[serde(rename_all = "camelCase")]`, so `request_id` would have been the one inconsistent field.
+
+**Priority:** Medium (P2)  
+**Labels:** `backend`, `security`, `cwe-209`, `observability`, `p2`  
+**Files:** `src/error.rs`, `src/lib.rs`  
+
+#### 1. Problem Description
+`ApiError::into_response` rendered `{ "code": ..., "message": ..., "retryable": ... }` with no request correlation id, so support couldn't match a customer-reported error to server-side logs without asking for sensitive operational detail.
+
+#### 2. Step-by-Step Implementation Guide
+1. Use `tower_http::request_id::MakeRequestUuid` to assign a UUID to every incoming request.
+2. Update `ApiError::into_response` to include `request_id`.
+3. Record the same id in `tracing::error!(request_id = %req_id, ...)` so server logs can be cross-referenced.
+
+#### 3. Acceptance Criteria
+- [x] Every 4xx and 5xx API response includes a request id field (`requestId` in the JSON body where one exists; `x-request-id` header on every response, including the handful of error responses with no JSON body).
+- [x] Database error details are logged strictly on the server alongside the matching request id (via the tracing span, not a literal `tracing::error!(request_id = ...)` call — same outcome, no per-call-site plumbing).
 
