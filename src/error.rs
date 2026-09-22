@@ -131,7 +131,11 @@ impl From<sqlx::Error> for ApiError {
 
 impl From<serde_json::Error> for ApiError {
     fn from(err: serde_json::Error) -> Self {
-        ApiError::validation(format!("Invalid JSON: {err}"))
+        // `serde_json::Error`'s Display embeds struct field names and enum
+        // variants from our internal types (CWE-209) — log it, never return
+        // it. See ISSUE-BE-08.
+        tracing::warn!(error = %err, "JSON deserialization failure");
+        ApiError::validation("Malformed JSON payload or invalid field format.")
     }
 }
 

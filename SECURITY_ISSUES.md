@@ -15,6 +15,7 @@ This document outlines the actionable security issues and engineering fixes iden
 | **`ISSUE-BE-05`** | **MEDIUM** | `src/lib.rs:55` | OWASP A04 (DoS) | Global 12 MB body limit without request timeouts or rate-limiting layers. |
 | **`ISSUE-BE-06`** | **LOW** | `src/domain/*/repo.rs` | OWASP A03 (Injection) | Dynamic string formatting (`format!`) used in SQL queries. |
 | **`ISSUE-BE-07`** | **MEDIUM** | `src/error.rs`, `src/lib.rs` | CWE-209 (Observability) | Error responses carried no request correlation id for support/log cross-referencing. |
+| **`ISSUE-BE-08`** | **LOW** | `src/http/mod.rs` | CWE-209 (Info Exposure) | Raw `serde_json`/axum rejection text (struct field names) returned verbatim to callers on malformed JSON. |
 
 ---
 
@@ -277,4 +278,24 @@ While the interpolated constants are currently internal strings, dynamic query g
 #### 3. Acceptance Criteria
 - [x] Every 4xx and 5xx API response includes a request id field (`requestId` in the JSON body where one exists; `x-request-id` header on every response, including the handful of error responses with no JSON body).
 - [x] Database error details are logged strictly on the server alongside the matching request id (via the tracing span, not a literal `tracing::error!(request_id = ...)` call — same outcome, no per-call-site plumbing).
+
+---
+
+### ISSUE-BE-08: Sanitize JSON Deserialization Errors to Prevent Schema/Field Leakage
+
+**Status:** ✅ Fixed at both the impl the issue named and the actual live leak path. `From<serde_json::Error>` (`src/error.rs`) now logs via `tracing::warn!` and returns a generic message — though this impl is currently unreachable dead code (nothing in the codebase calls `serde_json::from_str::<T>(...)?` through it). **The real, live leak was `Body<T>` in `src/http/mod.rs`**, which passed axum's raw `JsonRejection::body_text()` straight to the client — verified live before the fix: `POST /register` with a missing field returned `"Failed to deserialize the JSON body into the target type: missing field \`password\` at line 1 column 19"`, and a wrong-typed field returned `"email: invalid type: integer \`123\`, expected a string..."`, both naming real struct field names. Added `sanitize_json_rejection`: the two variants that embed serde's internal text (`JsonDataError`, `JsonSyntaxError`) now log full detail server-side (correlated via the ISSUE-BE-07 request-id span — confirmed the log line's `request_id` matches the response body's `requestId` for the same request) and return `"Malformed JSON payload or invalid field format."` to the caller; the other two variants (missing `Content-Type`, body-too-large) describe HTTP request shape, not Rust types, so they're left as-is.
+
+**Priority:** Low (P3)  
+**Labels:** `backend`, `security`, `cwe-209`, `p3`  
+**Files:** `src/error.rs`, `src/http/mod.rs` (the issue named only `src/error.rs`; the live leak was actually in the latter)  
+
+#### 1. Problem Description
+`serde_json::Error` formats can leak internal struct field names, expected enum variants, and byte offsets to unauthenticated callers.
+
+#### 2. Step-by-Step Implementation Guide
+Update `From<serde_json::Error>` to log via `tracing::warn!` and return a generic validation message instead of the raw error.
+
+#### 3. Acceptance Criteria
+- [x] Malformed JSON requests return a standardized validation message.
+- [x] Raw internal Serde error types and struct definitions are suppressed from API responses.
 
