@@ -19,6 +19,8 @@ This document outlines the actionable security issues and engineering fixes iden
 
 ### ISSUE-BE-01: Implement Production Authentication & Token Validation
 
+**Status:** ✅ Resolved in `d672d55` ("feat: add real user registration, login, and DB-backed sessions"). `Session::from_request_parts` now reads the `kimana_session` cookie, hashes it, and requires a live (non-expired, non-revoked) row in `sessions`; there is no unauthenticated fallback. See `src/http/auth.rs`.
+
 **Priority:** Critical (P0)  
 **Labels:** `security`, `auth`, `access-control`  
 **Files:** `src/http/auth.rs`, `src/routes.rs`, `migrations/008_sessions.sql`  
@@ -76,9 +78,9 @@ Any incoming request without cookies, tokens, or credentials inherits full admin
    In development or automated test mode (`state.config.is_test`), permit an explicit `X-Demo-Session: true` header or seed a session token, but never allow silent unauthenticated fallback.
 
 #### 3. Acceptance Criteria
-- [ ] Requests without valid bearer tokens return `401 Unauthorized`.
-- [ ] Requests with expired or revoked session tokens return `401 Unauthorized`.
-- [ ] Valid tokens extract the authentic user's `Session` and `customer_id`.
+- [x] Requests without valid bearer tokens return `401 Unauthorized`.
+- [x] Requests with expired or revoked session tokens return `401 Unauthorized`.
+- [x] Valid tokens extract the authentic user's `Session` and `customer_id`.
 
 ---
 

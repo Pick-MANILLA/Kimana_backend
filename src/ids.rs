@@ -1,5 +1,5 @@
-//! Fixed identifiers for the single seeded demo tenant. The session extractor
-//! resolves the session from `DEMO_USER_ID` until real login lands.
+//! Fixed identifiers for the single seeded demo tenant, used by `src/seed.rs`
+//! to populate local dev data. Not used in any request-handling path.
 
 use uuid::{uuid, Uuid};
 

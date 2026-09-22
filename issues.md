@@ -12,6 +12,8 @@
 
 ### ISSUE-01: Session extractor always resolves to the hardcoded demo user
 
+**Status:** ✅ Resolved in `d672d55` ("feat: add real user registration, login, and DB-backed sessions"). `Session::from_request_parts` now reads the `kimana_session` cookie, hashes it, and requires a live (non-expired, non-revoked) row in `sessions`, joined to `users`/`customers`; missing or invalid tokens get `401`. `POST /auth/register`, `/auth/login`, `/auth/logout` are implemented in `src/domain/auth/`. `DEMO_USER_ID` is now only referenced by `src/seed.rs` for local dev seeding, never at request time.
+
 **Priority:** P1
 **Label:** bug
 **Files:** `src/http/auth.rs`, `src/ids.rs`
@@ -62,12 +64,12 @@ The comment in the file acknowledges this: `"P1 slice: a single seeded demo cust
 
 #### Acceptance criteria
 
-- [ ] `POST /auth/login` with correct credentials returns a session token and `200 OK`.
-- [ ] `POST /auth/login` with wrong credentials returns `401`.
-- [ ] All protected routes return `401` when called without a valid session token.
-- [ ] `POST /auth/logout` invalidates the session; subsequent requests with that token return `401`.
-- [ ] The demo user (`Chinonso`) can log in using `cargo run --bin seed`-inserted credentials.
-- [ ] No route relies on `DEMO_USER_ID` at runtime after this change.
+- [x] `POST /auth/login` with correct credentials returns a session token and `200 OK`.
+- [x] `POST /auth/login` with wrong credentials returns `401`.
+- [x] All protected routes return `401` when called without a valid session token.
+- [x] `POST /auth/logout` invalidates the session; subsequent requests with that token return `401`.
+- [x] The demo user (`Chinonso`) can log in using `cargo run --bin seed`-inserted credentials.
+- [x] No route relies on `DEMO_USER_ID` at runtime after this change.
 
 ---
 
