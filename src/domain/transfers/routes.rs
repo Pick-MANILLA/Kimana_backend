@@ -1,9 +1,9 @@
 use super::service::{self, CreateTransferInput};
 use crate::contract::transfer::{Transfer, TransferStatus, TransferTimeline};
 use crate::error::{ApiResult, ErrorResponse};
-use crate::http::{Body, Session};
+use crate::http::{Body, Path, Query, Session};
 use crate::state::AppState;
-use axum::extract::{Path, Query, State};
+use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -33,6 +33,7 @@ pub(crate) struct CreateTransferBody {
 #[utoipa::path(
     post,
     path = "/transfers",
+    operation_id = "create_transfer",
     tag = "transfers",
     request_body = CreateTransferBody,
     params(
@@ -168,6 +169,7 @@ pub(crate) async fn screening_decision(
 #[utoipa::path(
     get,
     path = "/transfers",
+    operation_id = "list_transfers",
     tag = "transfers",
     params(ListQuery),
     responses(

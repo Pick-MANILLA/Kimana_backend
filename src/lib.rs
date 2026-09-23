@@ -17,17 +17,19 @@ use axum::body::{to_bytes, Body as AxumBody};
 use axum::extract::{DefaultBodyLimit, Request};
 use axum::http::{header, HeaderName, HeaderValue, Method, StatusCode};
 use axum::middleware::{self, Next};
-use axum::response::Response;
+use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
+use error::{ApiError, ErrorCode};
 use serde_json::json;
 use state::AppState;
+use std::any::Any;
 use std::time::Duration;
+use tower_http::catch_panic::CatchPanicLayer;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::request_id::{
     MakeRequestUuid, PropagateRequestIdLayer, RequestId, SetRequestIdLayer,
 };
-use tower_http::timeout::TimeoutLayer;
 use tracing::Instrument;
 use utoipa::openapi::security::{ApiKey, ApiKeyValue, SecurityScheme};
 use utoipa::{Modify, OpenApi};
@@ -101,6 +103,45 @@ async fn attach_request_id(req: Request, next: Next) -> Response {
             .expect("a decimal length is a valid header value"),
     );
     Response::from_parts(parts, AxumBody::from(new_bytes))
+}
+
+/// Aborts a request that runs past `REQUEST_TIMEOUT`. Hand-rolled instead of
+/// tower-http's `TimeoutLayer` because that one answers with an empty body,
+/// which the frontend's `ApiError` handling can't read.
+async fn enforce_timeout(req: Request, next: Next) -> Response {
+    match tokio::time::timeout(REQUEST_TIMEOUT, next.run(req)).await {
+        Ok(response) => response,
+        Err(_) => {
+            tracing::warn!("request timed out");
+            ApiError::new(
+                ErrorCode::Timeout,
+                "The request took too long. Try again in a moment.",
+            )
+            .with_status(StatusCode::REQUEST_TIMEOUT)
+            .into_response()
+        }
+    }
+}
+
+/// Turns a handler panic into our 500 JSON body instead of a dropped
+/// connection. The payload is logged, never returned (CWE-209).
+fn handle_panic(payload: Box<dyn Any + Send + 'static>) -> Response {
+    let detail = payload
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| payload.downcast_ref::<&str>().copied())
+        .unwrap_or("non-string panic payload");
+    tracing::error!(panic = detail, "handler panicked");
+    ApiError::server_error().into_response()
+}
+
+async fn route_not_found() -> ApiError {
+    ApiError::not_found("That endpoint doesn't exist.")
+}
+
+async fn method_not_allowed() -> ApiError {
+    ApiError::validation("That HTTP method isn't supported on this endpoint.")
+        .with_status(StatusCode::METHOD_NOT_ALLOWED)
 }
 
 /// Registers the `kimana_session` cookie as the `cookieAuth` scheme that
@@ -201,14 +242,47 @@ pub fn build_app(state: AppState) -> Router {
         .merge(domain::recipients::routes())
         .merge(domain::quote::routes())
         .merge(domain::transfers::routes())
+        .fallback(route_not_found)
+        .method_not_allowed_fallback(method_not_allowed)
         .layer(DefaultBodyLimit::max(DEFAULT_BODY_LIMIT))
+        .layer(CatchPanicLayer::custom(handle_panic))
+        .layer(middleware::from_fn(enforce_timeout))
         .layer(middleware::from_fn(attach_request_id))
-        .layer(TimeoutLayer::with_status_code(
-            StatusCode::REQUEST_TIMEOUT,
-            REQUEST_TIMEOUT,
-        ))
         .layer(PropagateRequestIdLayer::new(REQUEST_ID_HEADER))
         .layer(SetRequestIdLayer::new(REQUEST_ID_HEADER, MakeRequestUuid))
         .layer(cors)
         .with_state(state)
+}
+
+#[cfg(test)]
+mod openapi_tests {
+    use super::ApiDoc;
+    use std::collections::HashMap;
+    use utoipa::OpenApi;
+
+    /// Swagger UI routes "Try it out" by operationId, so a duplicate makes
+    /// one endpoint silently execute another. utoipa defaults the id to the
+    /// handler's fn name, which collides easily (`create`, `list`).
+    #[test]
+    fn operation_ids_are_unique() {
+        let mut seen: HashMap<String, String> = HashMap::new();
+        for (path, item) in ApiDoc::openapi().paths.paths {
+            let ops = [
+                ("GET", item.get),
+                ("PUT", item.put),
+                ("POST", item.post),
+                ("DELETE", item.delete),
+                ("PATCH", item.patch),
+            ];
+            for (method, op) in ops {
+                let Some(id) = op.and_then(|op| op.operation_id) else {
+                    continue;
+                };
+                let here = format!("{method} {path}");
+                if let Some(prev) = seen.insert(id.clone(), here.clone()) {
+                    panic!("operationId `{id}` is used by both {prev} and {here}");
+                }
+            }
+        }
+    }
 }

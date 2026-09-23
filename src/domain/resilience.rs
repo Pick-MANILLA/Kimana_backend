@@ -9,7 +9,7 @@
 //! partner integration, not just the FX feed that uses it today.
 
 use std::future::Future;
-use std::sync::Mutex;
+use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Copy)]
@@ -56,8 +56,11 @@ impl CircuitBreaker {
     {
         // Was this attempt a half-open trial? Determines whether a failure
         // re-opens the breaker immediately, bypassing the failure count.
+        // Poison recovery throughout: each guarded value is a single enum or
+        // counter with no cross-field invariant a panic could leave half-set,
+        // and a poisoned breaker would otherwise panic every later FX call.
         let is_trial = {
-            let mut state = self.state.lock().unwrap();
+            let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
             match *state {
                 State::Open { opened_at } => {
                     let elapsed = opened_at.elapsed();
@@ -76,15 +79,21 @@ impl CircuitBreaker {
 
         match op().await {
             Ok(value) => {
-                *self.consecutive_failures.lock().unwrap() = 0;
-                *self.state.lock().unwrap() = State::Closed;
+                *self
+                    .consecutive_failures
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner) = 0;
+                *self.state.lock().unwrap_or_else(PoisonError::into_inner) = State::Closed;
                 Ok(value)
             }
             Err(err) => {
-                let mut failures = self.consecutive_failures.lock().unwrap();
+                let mut failures = self
+                    .consecutive_failures
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner);
                 *failures += 1;
                 if is_trial || *failures >= self.failure_threshold {
-                    *self.state.lock().unwrap() = State::Open {
+                    *self.state.lock().unwrap_or_else(PoisonError::into_inner) = State::Open {
                         opened_at: Instant::now(),
                     };
                 }

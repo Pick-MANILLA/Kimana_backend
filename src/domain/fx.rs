@@ -13,9 +13,10 @@ use crate::contract::common::CurrencyCode;
 use crate::contract::quote::{IndicativeRate, RateSource};
 use crate::domain::resilience::{CallError, CircuitBreaker};
 use crate::error::{ApiError, ApiResult, ErrorResponse};
+use crate::http::Query;
 use crate::state::AppState;
 use crate::util::iso;
-use axum::extract::{Query, State};
+use axum::extract::State;
 use axum::routing::get;
 use axum::{Json, Router};
 use chrono::{DateTime, Utc};
@@ -24,7 +25,7 @@ use serde::Deserialize;
 use sqlx::PgPool;
 use std::collections::HashMap;
 use std::future::Future;
-use std::sync::Mutex as StdMutex;
+use std::sync::{Mutex as StdMutex, PoisonError};
 use std::time::{Duration, Instant};
 
 const JITTER_SPREAD: f64 = 0.004;
@@ -317,13 +318,18 @@ impl FxResilience {
 
         match self.breaker.call(timed_fetch).await {
             Ok(Some(rate)) => {
-                self.cache.lock().unwrap().insert(
-                    pair.to_string(),
-                    CachedRate {
-                        rate: rate.clone(),
-                        cached_at: Instant::now(),
-                    },
-                );
+                // The cache is a plain map, so a poisoned guard's contents are still
+                // valid; recovering keeps one panic from breaking every later call.
+                self.cache
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .insert(
+                        pair.to_string(),
+                        CachedRate {
+                            rate: rate.clone(),
+                            cached_at: Instant::now(),
+                        },
+                    );
                 Ok(RateOutcome::Live(rate))
             }
             Ok(None) => Ok(RateOutcome::NotFound),
@@ -338,7 +344,7 @@ impl FxResilience {
                 let cached = self
                     .cache
                     .lock()
-                    .unwrap()
+                    .unwrap_or_else(PoisonError::into_inner)
                     .get(pair)
                     .map(|c| (c.rate.clone(), c.cached_at.elapsed()));
                 match cached {
