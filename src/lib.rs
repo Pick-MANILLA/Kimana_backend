@@ -9,6 +9,7 @@ pub mod http;
 pub mod ids;
 pub mod routes;
 pub mod seed;
+pub mod settlement;
 pub mod state;
 pub mod storage;
 pub mod util;
