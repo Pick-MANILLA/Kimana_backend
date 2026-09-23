@@ -1,8 +1,9 @@
 use super::common::{CurrencyCode, Money};
 use super::ledger::AccountBalance;
 use serde::Serialize;
+use utoipa::ToSchema;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum BalanceHighlightTone {
     Success,
@@ -10,7 +11,7 @@ pub enum BalanceHighlightTone {
     Danger,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct BalanceHighlight {
     pub currency: CurrencyCode,
@@ -20,7 +21,7 @@ pub struct BalanceHighlight {
     pub delta_tone: BalanceHighlightTone,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DashboardStats {
     pub volume30d: Money,
@@ -29,7 +30,7 @@ pub struct DashboardStats {
     pub avg_settlement_seconds: i64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PendingActionKind {
     ActionRequired,
@@ -37,7 +38,7 @@ pub enum PendingActionKind {
     Submitted,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct PendingAction {
     pub id: String,
@@ -48,7 +49,7 @@ pub struct PendingAction {
     pub transfer_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkingCapitalOffer {
     pub max_advance: Money,
@@ -56,7 +57,7 @@ pub struct WorkingCapitalOffer {
     pub monthly_rate_percent: f64,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DashboardOverview {
     pub display_name: String,

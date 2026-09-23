@@ -14,8 +14,9 @@ pub fn session_routes() -> Router<AppState> {
     tag = "auth",
     responses(
         (status = 200, description = "Current session", body = SessionResponse),
-        (status = 401, description = "Not authenticated"),
-    )
+        (status = 401, description = "Not authenticated", body = crate::error::ErrorResponse),
+    ),
+    security(("cookieAuth" = []))
 )]
 pub(crate) async fn get_session(session: Session) -> Json<SessionResponse> {
     Json(SessionResponse {

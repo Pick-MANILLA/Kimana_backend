@@ -5,7 +5,9 @@ use axum::http::header::{COOKIE, SET_COOKIE};
 use axum::http::{Request, StatusCode};
 use axum::Router;
 use http_body_util::BodyExt;
-use kimana_backend::{build_app, config::Config, db, http::SESSION_COOKIE_NAME, seed, state::AppState};
+use kimana_backend::{
+    build_app, config::Config, db, http::SESSION_COOKIE_NAME, seed, state::AppState,
+};
 use serde_json::Value;
 use sqlx::PgPool;
 use std::sync::Mutex;
@@ -39,7 +41,11 @@ impl TestApp {
                 serde_json::json!({ "email": seed::DEMO_EMAIL, "password": seed::DEMO_PASSWORD }),
             )
             .await;
-        assert_eq!(status, StatusCode::OK, "demo login must succeed after seeding");
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "demo login must succeed after seeding"
+        );
         app
     }
 
@@ -54,7 +60,11 @@ impl TestApp {
                 serde_json::json!({ "email": seed::DEMO_EMAIL, "password": seed::DEMO_PASSWORD }),
             )
             .await;
-        assert_eq!(status, StatusCode::OK, "demo login must succeed after reseeding");
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "demo login must succeed after reseeding"
+        );
     }
 
     pub fn router_clone(&self) -> Router {

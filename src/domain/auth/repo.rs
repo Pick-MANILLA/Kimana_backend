@@ -117,9 +117,11 @@ pub async fn insert_session(
 
 /// Idempotent: revoking an already-revoked or unknown token is not an error.
 pub async fn revoke_session(pool: &PgPool, token_hash: &str) -> ApiResult<()> {
-    sqlx::query("update sessions set revoked_at = now() where token_hash = $1 and revoked_at is null")
-        .bind(token_hash)
-        .execute(pool)
-        .await?;
+    sqlx::query(
+        "update sessions set revoked_at = now() where token_hash = $1 and revoked_at is null",
+    )
+    .bind(token_hash)
+    .execute(pool)
+    .await?;
     Ok(())
 }

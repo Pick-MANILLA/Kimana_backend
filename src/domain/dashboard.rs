@@ -6,7 +6,7 @@ use crate::contract::dashboard::{
     PendingActionKind, WorkingCapitalOffer,
 };
 use crate::domain::{ledger, onboarding};
-use crate::error::ApiResult;
+use crate::error::{ApiResult, ErrorResponse};
 use crate::http::Session;
 use crate::state::AppState;
 use axum::extract::State;
@@ -143,7 +143,17 @@ pub fn routes() -> Router<AppState> {
     Router::new().route("/dashboard/overview", get(overview))
 }
 
-async fn overview(
+#[utoipa::path(
+    get,
+    path = "/dashboard/overview",
+    tag = "dashboard",
+    responses(
+        (status = 200, description = "Dashboard aggregate", body = DashboardOverview),
+        (status = 401, description = "Not authenticated", body = ErrorResponse),
+    ),
+    security(("cookieAuth" = []))
+)]
+pub(crate) async fn overview(
     State(state): State<AppState>,
     session: Session,
 ) -> ApiResult<Json<DashboardOverview>> {

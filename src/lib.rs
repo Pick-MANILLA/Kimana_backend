@@ -24,10 +24,13 @@ use serde_json::json;
 use state::AppState;
 use std::time::Duration;
 use tower_http::cors::{AllowOrigin, CorsLayer};
-use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, RequestId, SetRequestIdLayer};
+use tower_http::request_id::{
+    MakeRequestUuid, PropagateRequestIdLayer, RequestId, SetRequestIdLayer,
+};
 use tower_http::timeout::TimeoutLayer;
 use tracing::Instrument;
-use utoipa::OpenApi;
+use utoipa::openapi::security::{ApiKey, ApiKeyValue, SecurityScheme};
+use utoipa::{Modify, OpenApi};
 use utoipa_swagger_ui::SwaggerUi;
 
 /// Default cap for standard JSON request bodies (see ISSUE-BE-05). The
@@ -100,6 +103,20 @@ async fn attach_request_id(req: Request, next: Next) -> Response {
     Response::from_parts(parts, AxumBody::from(new_bytes))
 }
 
+/// Registers the `kimana_session` cookie as the `cookieAuth` scheme that
+/// protected paths reference via `security(("cookieAuth" = []))`.
+struct CookieAuth;
+
+impl Modify for CookieAuth {
+    fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
+        let components = openapi.components.get_or_insert_with(Default::default);
+        components.add_security_scheme(
+            "cookieAuth",
+            SecurityScheme::ApiKey(ApiKey::Cookie(ApiKeyValue::new(http::SESSION_COOKIE_NAME))),
+        );
+    }
+}
+
 #[derive(OpenApi)]
 #[openapi(
     paths(
@@ -107,14 +124,40 @@ async fn attach_request_id(req: Request, next: Next) -> Response {
         domain::auth::routes::register,
         domain::auth::routes::login,
         domain::auth::routes::logout,
+        domain::onboarding::routes::get_application,
+        domain::onboarding::routes::save_business,
+        domain::onboarding::routes::save_principals,
+        domain::onboarding::routes::submit,
+        domain::onboarding::routes::upload_document,
+        domain::onboarding::routes::retry_document,
+        domain::onboarding::routes::remove_document,
+        domain::dashboard::overview,
+        domain::fx::indicative,
+        domain::recipients::list,
+        domain::recipients::save,
+        domain::recipients::validate,
+        domain::quote::create,
+        domain::transfers::routes::create,
+        domain::transfers::routes::list,
+        domain::transfers::routes::get_one,
+        domain::transfers::routes::timeline,
+        domain::transfers::routes::screening_decision,
     ),
     components(schemas(
+        error::ErrorResponse,
         contract::auth::SessionResponse,
         domain::auth::routes::RegisterBody,
         domain::auth::routes::LoginBody,
     )),
+    modifiers(&CookieAuth),
     tags(
-        (name = "auth", description = "Registration, login, session and logout")
+        (name = "auth", description = "Registration, login, session and logout"),
+        (name = "onboarding", description = "KYB onboarding wizard: business, principals, documents, submit"),
+        (name = "dashboard", description = "Server-composed dashboard aggregate"),
+        (name = "fx", description = "Indicative FX rates"),
+        (name = "recipients", description = "Payout recipients"),
+        (name = "quotes", description = "Firm quotes"),
+        (name = "transfers", description = "Transfer lifecycle"),
     )
 )]
 struct ApiDoc;

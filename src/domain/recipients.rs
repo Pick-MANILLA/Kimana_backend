@@ -3,7 +3,7 @@
 use crate::audit::{write_audit, AuditEntry};
 use crate::contract::common::CurrencyCode;
 use crate::contract::transfer::Recipient;
-use crate::error::{ApiError, ApiResult};
+use crate::error::{ApiError, ApiResult, ErrorResponse};
 use crate::http::{Body, Session};
 use crate::state::AppState;
 use crate::util::{is_uuid, iso};
@@ -15,6 +15,7 @@ use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use serde_json::json;
 use sqlx::PgPool;
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 const DEFAULT_BANK_NAME: &str = "Partner Bank";
@@ -83,18 +84,18 @@ pub async fn find_by_id(
 
 // ---- request bodies ----
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
-struct NewRecipientBody {
+pub(crate) struct NewRecipientBody {
     account_number: String,
     bank_code: String,
     currency: String,
     country: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
-struct SaveRecipientBody {
+pub(crate) struct SaveRecipientBody {
     account_number: String,
     bank_code: String,
     currency: String,
@@ -138,13 +139,46 @@ pub fn routes() -> Router<AppState> {
         .route("/recipients/validate", post(validate))
 }
 
-async fn list(State(state): State<AppState>, session: Session) -> ApiResult<Json<Vec<Recipient>>> {
+#[utoipa::path(
+    get,
+    path = "/recipients",
+    tag = "recipients",
+    responses(
+        (status = 200, description = "Saved recipients", body = [Recipient]),
+        (status = 401, description = "Not authenticated", body = ErrorResponse),
+    ),
+    security(("cookieAuth" = []))
+)]
+pub(crate) async fn list(
+    State(state): State<AppState>,
+    session: Session,
+) -> ApiResult<Json<Vec<Recipient>>> {
     Ok(Json(
         list_by_customer(&state.pool, session.customer_id).await?,
     ))
 }
 
-async fn validate(
+/// OpenAPI-only shape of the JSON `validate` returns.
+#[allow(dead_code)]
+#[derive(ToSchema)]
+#[schema(rename_all = "camelCase")]
+pub(crate) struct ValidateRecipientResponse {
+    account_name: String,
+}
+
+#[utoipa::path(
+    post,
+    path = "/recipients/validate",
+    tag = "recipients",
+    request_body = NewRecipientBody,
+    responses(
+        (status = 200, description = "Resolved account holder name", body = ValidateRecipientResponse),
+        (status = 400, description = "Validation error", body = ErrorResponse),
+        (status = 401, description = "Not authenticated", body = ErrorResponse),
+    ),
+    security(("cookieAuth" = []))
+)]
+pub(crate) async fn validate(
     _session: Session,
     Body(body): Body<NewRecipientBody>,
 ) -> ApiResult<Json<serde_json::Value>> {
@@ -154,7 +188,19 @@ async fn validate(
     ))
 }
 
-async fn save(
+#[utoipa::path(
+    post,
+    path = "/recipients",
+    tag = "recipients",
+    request_body = SaveRecipientBody,
+    responses(
+        (status = 201, description = "Recipient saved", body = Recipient),
+        (status = 400, description = "Validation error", body = ErrorResponse),
+        (status = 401, description = "Not authenticated", body = ErrorResponse),
+    ),
+    security(("cookieAuth" = []))
+)]
+pub(crate) async fn save(
     State(state): State<AppState>,
     session: Session,
     Body(body): Body<SaveRecipientBody>,

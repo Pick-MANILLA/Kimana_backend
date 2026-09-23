@@ -69,7 +69,7 @@ async fn check_exposure_limits(
     let platform_exposure = ledger::platform_open_exposure_by_currency(&mut *conn).await?;
     tracing::info!(?platform_exposure, "platform-wide FX exposure");
 
-    return Ok(());
+    Ok(())
 }
 
 pub async fn create_transfer(
