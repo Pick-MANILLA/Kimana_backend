@@ -20,7 +20,9 @@ async fn register_creates_user_and_session() {
     let app = TestApp::new().await;
     app.clear_cookie();
 
-    let (status, body) = app.post("/register", register_body("ada@example.com")).await;
+    let (status, body) = app
+        .post("/register", register_body("ada@example.com"))
+        .await;
     assert_eq!(status, StatusCode::CREATED);
     assert_eq!(body["role"], "customer");
     assert_eq!(body["displayName"], "Ada Lovelace");
@@ -36,7 +38,9 @@ async fn register_creates_draft_onboarding_application() {
     let app = TestApp::new().await;
     app.clear_cookie();
 
-    let (status, _) = app.post("/register", register_body("bola@example.com")).await;
+    let (status, _) = app
+        .post("/register", register_body("bola@example.com"))
+        .await;
     assert_eq!(status, StatusCode::CREATED);
 
     let (status, application) = app.get("/onboarding/application").await;

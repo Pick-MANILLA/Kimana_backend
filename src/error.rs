@@ -104,7 +104,9 @@ impl ApiError {
         let secs = retry_after.as_secs().max(1);
         ApiError::new(
             ErrorCode::PartnerFailure,
-            format!("Rate feed for {corridor} is temporarily unavailable. Try again in about {secs}s."),
+            format!(
+                "Rate feed for {corridor} is temporarily unavailable. Try again in about {secs}s."
+            ),
         )
     }
     pub fn server_error() -> Self {

@@ -24,7 +24,9 @@ use serde_json::json;
 use state::AppState;
 use std::time::Duration;
 use tower_http::cors::{AllowOrigin, CorsLayer};
-use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, RequestId, SetRequestIdLayer};
+use tower_http::request_id::{
+    MakeRequestUuid, PropagateRequestIdLayer, RequestId, SetRequestIdLayer,
+};
 use tower_http::timeout::TimeoutLayer;
 use tracing::Instrument;
 use utoipa::openapi::security::{ApiKey, ApiKeyValue, SecurityScheme};

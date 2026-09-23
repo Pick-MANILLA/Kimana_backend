@@ -116,7 +116,10 @@ mod tests {
     #[tokio::test]
     async fn single_failure_stays_closed() {
         let breaker = CircuitBreaker::new(3, Duration::from_secs(10));
-        assert!(matches!(breaker.call(fail).await, Err(CallError::Failed(_))));
+        assert!(matches!(
+            breaker.call(fail).await,
+            Err(CallError::Failed(_))
+        ));
         // Below threshold: the next call is still attempted, not fast-failed.
         assert!(matches!(breaker.call(ok).await, Ok("fine")));
     }
@@ -125,7 +128,10 @@ mod tests {
     async fn opens_after_consecutive_failures_reach_threshold() {
         let breaker = CircuitBreaker::new(3, Duration::from_secs(10));
         for _ in 0..3 {
-            assert!(matches!(breaker.call(fail).await, Err(CallError::Failed(_))));
+            assert!(matches!(
+                breaker.call(fail).await,
+                Err(CallError::Failed(_))
+            ));
         }
         let calls = AtomicU32::new(0);
         let result = breaker
@@ -135,7 +141,11 @@ mod tests {
             })
             .await;
         assert!(matches!(result, Err(CallError::Open { .. })));
-        assert_eq!(calls.load(Ordering::SeqCst), 0, "op must not run while open");
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "op must not run while open"
+        );
     }
 
     #[tokio::test]
@@ -144,14 +154,23 @@ mod tests {
         for _ in 0..2 {
             let _ = breaker.call(fail).await;
         }
-        assert!(matches!(breaker.call(ok).await, Err(CallError::Open { .. })));
+        assert!(matches!(
+            breaker.call(ok).await,
+            Err(CallError::Open { .. })
+        ));
 
         tokio::time::sleep(Duration::from_millis(30)).await;
-        assert!(matches!(breaker.call(ok).await, Ok("fine")), "trial call must be attempted after cooldown");
+        assert!(
+            matches!(breaker.call(ok).await, Ok("fine")),
+            "trial call must be attempted after cooldown"
+        );
 
         // Failure count was reset by the successful trial: one failure
         // alone must not immediately re-open the breaker.
-        assert!(matches!(breaker.call(fail).await, Err(CallError::Failed(_))));
+        assert!(matches!(
+            breaker.call(fail).await,
+            Err(CallError::Failed(_))
+        ));
         assert!(matches!(breaker.call(ok).await, Ok("fine")));
     }
 
@@ -163,9 +182,15 @@ mod tests {
         }
         tokio::time::sleep(Duration::from_millis(30)).await;
 
-        assert!(matches!(breaker.call(fail).await, Err(CallError::Failed(_))), "trial call must be attempted");
+        assert!(
+            matches!(breaker.call(fail).await, Err(CallError::Failed(_))),
+            "trial call must be attempted"
+        );
         // Immediately re-opened: the very next call fails fast even though
         // only one failure happened since the trial.
-        assert!(matches!(breaker.call(ok).await, Err(CallError::Open { .. })));
+        assert!(matches!(
+            breaker.call(ok).await,
+            Err(CallError::Open { .. })
+        ));
     }
 }

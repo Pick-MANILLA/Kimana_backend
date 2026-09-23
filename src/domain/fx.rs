@@ -366,7 +366,9 @@ pub async fn get_indicative_rate(
 
     let (rate, source) = match outcome {
         RateOutcome::NotFound => {
-            return Err(ApiError::validation(format!("No rate available for {pair}.")));
+            return Err(ApiError::validation(format!(
+                "No rate available for {pair}."
+            )));
         }
         RateOutcome::Live(rate) => (rate, RateSource::Live),
         RateOutcome::CachedProvisional(rate) => (rate, RateSource::CachedProvisional),
