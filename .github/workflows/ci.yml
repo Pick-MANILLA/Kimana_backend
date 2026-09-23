@@ -19,6 +19,10 @@ jobs:
   security-audit:
     name: Security & Dependency Audit (RustSec)
     runs-on: ubuntu-latest
+    # audit-check reports its result as a check run, which needs write access.
+    permissions:
+      contents: read
+      checks: write
     steps:
       - uses: actions/checkout@v4
 
@@ -41,8 +45,6 @@ jobs:
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: Kimana_backend
 
       - name: Check Formatting
         run: cargo fmt --all -- --check
@@ -86,8 +88,6 @@ jobs:
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: Kimana_backend
 
       - name: Run Database Migrations
         run: cargo run --bin migrate
@@ -110,8 +110,6 @@ jobs:
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: Kimana_backend
 
       - name: Compile Release Binaries
         run: cargo build --release --all-targets
