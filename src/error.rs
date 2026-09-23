@@ -4,9 +4,10 @@ use axum::Json;
 use serde::Serialize;
 use serde_json::json;
 use std::time::Duration;
+use utoipa::ToSchema;
 
 /// Mirrors the frontend's `ApiErrorCode` union. See docs/backend-plan.md §02.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum ErrorCode {
     Network,
@@ -153,3 +154,16 @@ impl From<serde_json::Error> for ApiError {
 }
 
 pub type ApiResult<T> = Result<T, ApiError>;
+
+/// OpenAPI-only description of the body `ApiError::into_response` renders,
+/// plus the `requestId` that `attach_request_id` merges in. Never built at
+/// runtime.
+#[allow(dead_code)]
+#[derive(Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ErrorResponse {
+    pub code: ErrorCode,
+    pub message: String,
+    pub retryable: bool,
+    pub request_id: String,
+}

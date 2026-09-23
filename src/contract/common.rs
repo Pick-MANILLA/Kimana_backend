@@ -1,9 +1,10 @@
 use crate::error::ApiError;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 /// The only representation of money in the codebase: signed integer minor units
 /// plus a currency code. Never a float, never a bare number.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct Money {
     pub amount_minor: i64,
@@ -19,7 +20,7 @@ impl Money {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum CurrencyCode {
     Ngn,

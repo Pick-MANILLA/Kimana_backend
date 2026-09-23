@@ -3,7 +3,7 @@
 use crate::contract::common::{CurrencyCode, Money};
 use crate::contract::quote::{CostBreakdown, FirmQuote, QuoteAmountField, RateSource};
 use crate::domain::fx;
-use crate::error::{ApiError, ApiResult};
+use crate::error::{ApiError, ApiResult, ErrorResponse};
 use crate::http::{Body, Session};
 use crate::state::AppState;
 use crate::util::{apply_rate, invert_rate, is_uuid, iso};
@@ -14,6 +14,7 @@ use axum::{Json, Router};
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use sqlx::PgPool;
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 #[derive(sqlx::FromRow)]
@@ -125,9 +126,9 @@ pub async fn try_consume(
 
 // ---- request body ----
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
-struct RequestFirmQuoteBody {
+pub(crate) struct RequestFirmQuoteBody {
     send_currency: String,
     receive_currency: String,
     amount: Money,
@@ -201,7 +202,20 @@ pub fn routes() -> Router<AppState> {
     Router::new().route("/quotes", post(create))
 }
 
-async fn create(
+#[utoipa::path(
+    post,
+    path = "/quotes",
+    tag = "quotes",
+    request_body = RequestFirmQuoteBody,
+    responses(
+        (status = 201, description = "Firm quote, valid until `expiresAt`", body = FirmQuote),
+        (status = 400, description = "Validation error or no rate for the pair", body = ErrorResponse),
+        (status = 401, description = "Not authenticated", body = ErrorResponse),
+        (status = 502, description = "Rate feed unavailable (PARTNER_FAILURE)", body = ErrorResponse),
+    ),
+    security(("cookieAuth" = []))
+)]
+pub(crate) async fn create(
     State(state): State<AppState>,
     session: Session,
     Body(body): Body<RequestFirmQuoteBody>,

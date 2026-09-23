@@ -3,7 +3,7 @@ use crate::contract::onboarding::{
     BusinessDetails, DirectorOrBeneficialOwner, OnboardingApplication, OnboardingDocumentType,
     UploadedDocument,
 };
-use crate::error::{ApiError, ApiResult};
+use crate::error::{ApiError, ApiResult, ErrorResponse};
 use crate::http::{Body, Session};
 use crate::state::AppState;
 use axum::extract::{DefaultBodyLimit, Multipart, Path, State};
@@ -11,6 +11,7 @@ use axum::http::StatusCode;
 use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use serde::Deserialize;
+use utoipa::ToSchema;
 
 /// Document uploads carry file bytes, so they need more headroom than the
 /// 128 KB default the rest of the JSON API is capped at (see ISSUE-BE-05) —
@@ -37,22 +38,46 @@ pub fn routes() -> Router<AppState> {
         )
 }
 
-async fn get_application(
+#[utoipa::path(
+    get,
+    path = "/onboarding/application",
+    tag = "onboarding",
+    responses(
+        (status = 200, description = "The customer's onboarding application", body = OnboardingApplication),
+        (status = 401, description = "Not authenticated", body = ErrorResponse),
+        (status = 404, description = "No application for this customer", body = ErrorResponse),
+    ),
+    security(("cookieAuth" = []))
+)]
+pub(crate) async fn get_application(
     State(state): State<AppState>,
     session: Session,
 ) -> ApiResult<Json<OnboardingApplication>> {
     Ok(Json(service::get_application(&state, &session).await?))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
-struct SaveBusinessBody {
+pub(crate) struct SaveBusinessBody {
     #[serde(default)]
     application_id: Option<String>,
     business: BusinessDetails,
 }
 
-async fn save_business(
+#[utoipa::path(
+    put,
+    path = "/onboarding/application/business",
+    tag = "onboarding",
+    request_body = SaveBusinessBody,
+    responses(
+        (status = 200, description = "Updated application", body = OnboardingApplication),
+        (status = 400, description = "Validation error", body = ErrorResponse),
+        (status = 401, description = "Not authenticated", body = ErrorResponse),
+        (status = 404, description = "Application not found", body = ErrorResponse),
+    ),
+    security(("cookieAuth" = []))
+)]
+pub(crate) async fn save_business(
     State(state): State<AppState>,
     session: Session,
     Body(body): Body<SaveBusinessBody>,
@@ -63,15 +88,28 @@ async fn save_business(
     ))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
-struct SavePrincipalsBody {
+pub(crate) struct SavePrincipalsBody {
     #[serde(default)]
     application_id: Option<String>,
     principals: Vec<DirectorOrBeneficialOwner>,
 }
 
-async fn save_principals(
+#[utoipa::path(
+    put,
+    path = "/onboarding/application/principals",
+    tag = "onboarding",
+    request_body = SavePrincipalsBody,
+    responses(
+        (status = 200, description = "Updated application", body = OnboardingApplication),
+        (status = 400, description = "Validation error", body = ErrorResponse),
+        (status = 401, description = "Not authenticated", body = ErrorResponse),
+        (status = 404, description = "Application not found", body = ErrorResponse),
+    ),
+    security(("cookieAuth" = []))
+)]
+pub(crate) async fn save_principals(
     State(state): State<AppState>,
     session: Session,
     Body(body): Body<SavePrincipalsBody>,
@@ -81,13 +119,27 @@ async fn save_principals(
     ))
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, ToSchema)]
 #[serde(rename_all = "camelCase", default)]
-struct SubmitBody {
+pub(crate) struct SubmitBody {
     application_id: Option<String>,
 }
 
-async fn submit(
+#[utoipa::path(
+    post,
+    path = "/onboarding/application/submit",
+    tag = "onboarding",
+    request_body = SubmitBody,
+    responses(
+        (status = 200, description = "Application after KYB: approved or rejected", body = OnboardingApplication),
+        (status = 400, description = "Business details missing", body = ErrorResponse),
+        (status = 401, description = "Not authenticated", body = ErrorResponse),
+        (status = 404, description = "Application not found", body = ErrorResponse),
+        (status = 409, description = "Already under review", body = ErrorResponse),
+    ),
+    security(("cookieAuth" = []))
+)]
+pub(crate) async fn submit(
     State(state): State<AppState>,
     session: Session,
     Body(body): Body<SubmitBody>,
@@ -97,7 +149,32 @@ async fn submit(
     ))
 }
 
-async fn upload_document(
+/// OpenAPI-only shape of the multipart form `upload_document` reads by hand.
+#[allow(dead_code)]
+#[derive(ToSchema)]
+#[schema(rename_all = "camelCase")]
+pub(crate) struct DocumentUploadForm {
+    /// `cac_certificate`, `memart`, `proof_of_address`, `directors_id` or `board_resolution`
+    r#type: String,
+    #[schema(value_type = String, format = Binary)]
+    file: Vec<u8>,
+    application_id: Option<String>,
+}
+
+#[utoipa::path(
+    post,
+    path = "/onboarding/application/documents",
+    tag = "onboarding",
+    request_body(content = DocumentUploadForm, content_type = "multipart/form-data"),
+    responses(
+        (status = 200, description = "Stored document", body = UploadedDocument),
+        (status = 400, description = "Missing file or invalid type", body = ErrorResponse),
+        (status = 401, description = "Not authenticated", body = ErrorResponse),
+        (status = 404, description = "Application not found", body = ErrorResponse),
+    ),
+    security(("cookieAuth" = []))
+)]
+pub(crate) async fn upload_document(
     State(state): State<AppState>,
     session: Session,
     mut multipart: Multipart,
@@ -167,7 +244,19 @@ async fn upload_document(
     Ok(Json(saved))
 }
 
-async fn retry_document(
+#[utoipa::path(
+    post,
+    path = "/onboarding/application/documents/{id}/retry",
+    tag = "onboarding",
+    params(("id" = String, Path, description = "Document id")),
+    responses(
+        (status = 200, description = "Document after retry", body = UploadedDocument),
+        (status = 401, description = "Not authenticated", body = ErrorResponse),
+        (status = 404, description = "Document not found", body = ErrorResponse),
+    ),
+    security(("cookieAuth" = []))
+)]
+pub(crate) async fn retry_document(
     State(state): State<AppState>,
     session: Session,
     Path(id): Path<String>,
@@ -177,7 +266,19 @@ async fn retry_document(
     ))
 }
 
-async fn remove_document(
+#[utoipa::path(
+    delete,
+    path = "/onboarding/application/documents/{id}",
+    tag = "onboarding",
+    params(("id" = String, Path, description = "Document id")),
+    responses(
+        (status = 204, description = "Document removed"),
+        (status = 401, description = "Not authenticated", body = ErrorResponse),
+        (status = 404, description = "Document not found", body = ErrorResponse),
+    ),
+    security(("cookieAuth" = []))
+)]
+pub(crate) async fn remove_document(
     State(state): State<AppState>,
     session: Session,
     Path(id): Path<String>,

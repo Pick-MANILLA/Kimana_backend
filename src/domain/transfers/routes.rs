@@ -1,6 +1,6 @@
 use super::service::{self, CreateTransferInput};
 use crate::contract::transfer::{Transfer, TransferStatus, TransferTimeline};
-use crate::error::ApiResult;
+use crate::error::{ApiResult, ErrorResponse};
 use crate::http::{Body, Session};
 use crate::state::AppState;
 use axum::extract::{Path, Query, State};
@@ -8,6 +8,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
+use utoipa::{IntoParams, ToSchema};
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -20,16 +21,33 @@ pub fn routes() -> Router<AppState> {
         )
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
-struct CreateTransferBody {
+pub(crate) struct CreateTransferBody {
     #[serde(default)]
     idempotency_key: Option<String>,
     quote_id: String,
     recipient_id: String,
 }
 
-async fn create(
+#[utoipa::path(
+    post,
+    path = "/transfers",
+    tag = "transfers",
+    request_body = CreateTransferBody,
+    params(
+        ("Idempotency-Key" = Option<String>, Header, description = "Takes precedence over `idempotencyKey` in the body"),
+    ),
+    responses(
+        (status = 201, description = "Transfer created, or the existing one for a replayed idempotency key", body = Transfer),
+        (status = 400, description = "Validation error", body = ErrorResponse),
+        (status = 401, description = "Not authenticated", body = ErrorResponse),
+        (status = 404, description = "Quote or recipient not found", body = ErrorResponse),
+        (status = 409, description = "Quote expired or already accepted (RATE_EXPIRED / CONFLICT)", body = ErrorResponse),
+    ),
+    security(("cookieAuth" = []))
+)]
+pub(crate) async fn create(
     State(state): State<AppState>,
     session: Session,
     headers: HeaderMap,
@@ -55,7 +73,19 @@ async fn create(
     Ok((StatusCode::CREATED, Json(transfer)))
 }
 
-async fn get_one(
+#[utoipa::path(
+    get,
+    path = "/transfers/{id}",
+    tag = "transfers",
+    params(("id" = String, Path, description = "Transfer id")),
+    responses(
+        (status = 200, description = "Transfer", body = Transfer),
+        (status = 401, description = "Not authenticated", body = ErrorResponse),
+        (status = 404, description = "Transfer not found", body = ErrorResponse),
+    ),
+    security(("cookieAuth" = []))
+)]
+pub(crate) async fn get_one(
     State(state): State<AppState>,
     session: Session,
     Path(id): Path<String>,
@@ -63,7 +93,19 @@ async fn get_one(
     Ok(Json(service::get_transfer(&state, &session, &id).await?))
 }
 
-async fn timeline(
+#[utoipa::path(
+    get,
+    path = "/transfers/{id}/timeline",
+    tag = "transfers",
+    params(("id" = String, Path, description = "Transfer id")),
+    responses(
+        (status = 200, description = "State history", body = TransferTimeline),
+        (status = 401, description = "Not authenticated", body = ErrorResponse),
+        (status = 404, description = "Transfer not found", body = ErrorResponse),
+    ),
+    security(("cookieAuth" = []))
+)]
+pub(crate) async fn timeline(
     State(state): State<AppState>,
     session: Session,
     Path(id): Path<String>,
@@ -71,21 +113,39 @@ async fn timeline(
     Ok(Json(service::get_timeline(&state, &session, &id).await?))
 }
 
-#[derive(Deserialize)]
-struct ListQuery {
+#[derive(Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct ListQuery {
+    /// Filter by status, e.g. `AWAITING_FUNDS`
     #[serde(default)]
     status: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
-struct ScreeningDecisionBody {
+pub(crate) struct ScreeningDecisionBody {
+    /// `clear` or `reject`
     decision: String,
     #[serde(default)]
     reason: Option<String>,
 }
 
-async fn screening_decision(
+#[utoipa::path(
+    post,
+    path = "/transfers/{id}/screening/decision",
+    tag = "transfers",
+    params(("id" = String, Path, description = "Transfer id")),
+    request_body = ScreeningDecisionBody,
+    responses(
+        (status = 200, description = "Hold resolved", body = Transfer),
+        (status = 400, description = "Validation error", body = ErrorResponse),
+        (status = 401, description = "Not authenticated", body = ErrorResponse),
+        (status = 404, description = "Transfer not found", body = ErrorResponse),
+        (status = 409, description = "Transfer is not on a screening hold", body = ErrorResponse),
+    ),
+    security(("cookieAuth" = []))
+)]
+pub(crate) async fn screening_decision(
     State(state): State<AppState>,
     session: Session,
     Path(id): Path<String>,
@@ -105,7 +165,19 @@ async fn screening_decision(
     ))
 }
 
-async fn list(
+#[utoipa::path(
+    get,
+    path = "/transfers",
+    tag = "transfers",
+    params(ListQuery),
+    responses(
+        (status = 200, description = "Transfers for the signed-in customer", body = [Transfer]),
+        (status = 400, description = "Unknown status filter", body = ErrorResponse),
+        (status = 401, description = "Not authenticated", body = ErrorResponse),
+    ),
+    security(("cookieAuth" = []))
+)]
+pub(crate) async fn list(
     State(state): State<AppState>,
     session: Session,
     Query(q): Query<ListQuery>,

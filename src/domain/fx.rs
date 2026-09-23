@@ -12,7 +12,7 @@ use crate::config::Config;
 use crate::contract::common::CurrencyCode;
 use crate::contract::quote::{IndicativeRate, RateSource};
 use crate::domain::resilience::{CallError, CircuitBreaker};
-use crate::error::{ApiError, ApiResult};
+use crate::error::{ApiError, ApiResult, ErrorResponse};
 use crate::state::AppState;
 use crate::util::iso;
 use axum::extract::{Query, State};
@@ -403,9 +403,12 @@ pub async fn get_indicative_rate(
 
 // ---- routes ----
 
-#[derive(Deserialize)]
-struct RateQuery {
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct RateQuery {
+    /// Send currency code, e.g. `USD`
     send: String,
+    /// Receive currency code, e.g. `NGN`
     receive: String,
 }
 
@@ -413,7 +416,18 @@ pub fn routes() -> Router<AppState> {
     Router::new().route("/rates/indicative", get(indicative))
 }
 
-async fn indicative(
+#[utoipa::path(
+    get,
+    path = "/rates/indicative",
+    tag = "fx",
+    params(RateQuery),
+    responses(
+        (status = 200, description = "Indicative rate", body = IndicativeRate),
+        (status = 400, description = "Unknown currency or no rate for the pair", body = ErrorResponse),
+        (status = 502, description = "Rate feed unavailable (PARTNER_FAILURE)", body = ErrorResponse),
+    )
+)]
+pub(crate) async fn indicative(
     State(state): State<AppState>,
     Query(q): Query<RateQuery>,
 ) -> ApiResult<Json<IndicativeRate>> {

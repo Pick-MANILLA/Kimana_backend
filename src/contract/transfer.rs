@@ -2,8 +2,9 @@ use super::common::{CurrencyCode, Money};
 use super::quote::FirmQuote;
 use crate::error::ApiError;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct Recipient {
     pub id: String,
@@ -18,7 +19,7 @@ pub struct Recipient {
     pub saved_at: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum TransferStatus {
     Created,
@@ -87,7 +88,7 @@ impl TransferStatus {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TransferFailureCategory {
     Network,
@@ -97,19 +98,20 @@ pub enum TransferFailureCategory {
 }
 
 /// Discriminated by `status`, matching the frontend's TransferState union.
-#[derive(Debug, Clone, Serialize)]
+/// utoipa ignores `rename_all_fields`, so each variant repeats it as
+/// `#[schema(rename_all)]` to keep the OpenAPI field names camelCase.
+#[derive(Debug, Clone, Serialize, ToSchema)]
 #[serde(
     tag = "status",
     rename_all = "SCREAMING_SNAKE_CASE",
     rename_all_fields = "camelCase"
 )]
 pub enum TransferState {
-    Created {
-        entered_at: String,
-    },
-    Quoted {
-        entered_at: String,
-    },
+    #[schema(rename_all = "camelCase")]
+    Created { entered_at: String },
+    #[schema(rename_all = "camelCase")]
+    Quoted { entered_at: String },
+    #[schema(rename_all = "camelCase")]
     Screened {
         entered_at: String,
         hold: bool,
@@ -118,38 +120,35 @@ pub enum TransferState {
         #[serde(skip_serializing_if = "Option::is_none")]
         expected_resolution_by: Option<String>,
     },
+    #[schema(rename_all = "camelCase")]
     AwaitingFunds {
         entered_at: String,
         funding_reference: String,
     },
-    Funded {
-        entered_at: String,
-    },
-    Settling {
-        entered_at: String,
-    },
-    Settled {
-        entered_at: String,
-    },
-    PayingOut {
-        entered_at: String,
-    },
+    #[schema(rename_all = "camelCase")]
+    Funded { entered_at: String },
+    #[schema(rename_all = "camelCase")]
+    Settling { entered_at: String },
+    #[schema(rename_all = "camelCase")]
+    Settled { entered_at: String },
+    #[schema(rename_all = "camelCase")]
+    PayingOut { entered_at: String },
+    #[schema(rename_all = "camelCase")]
     Completed {
         entered_at: String,
         payout_reference: String,
     },
+    #[schema(rename_all = "camelCase")]
     Rejected {
         entered_at: String,
         failure_category: TransferFailureCategory,
         reason_code: String,
     },
-    Expired {
-        entered_at: String,
-    },
-    Reversing {
-        entered_at: String,
-        reason: String,
-    },
+    #[schema(rename_all = "camelCase")]
+    Expired { entered_at: String },
+    #[schema(rename_all = "camelCase")]
+    Reversing { entered_at: String, reason: String },
+    #[schema(rename_all = "camelCase")]
     Reversed {
         entered_at: String,
         reason: String,
@@ -157,7 +156,7 @@ pub enum TransferState {
     },
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct Transfer {
     pub id: String,
@@ -177,7 +176,7 @@ pub struct Transfer {
     pub updated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct TransferStateHistoryEntry {
     pub status: TransferStatus,
@@ -186,7 +185,7 @@ pub struct TransferStateHistoryEntry {
     pub note: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct TransferTimeline {
     pub transfer_id: String,
