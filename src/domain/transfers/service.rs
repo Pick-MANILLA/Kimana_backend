@@ -160,6 +160,7 @@ pub async fn create_transfer(
         ));
     }
 
+    repo::set_settlement_ref(&mut tx, transfer_id).await?;
     repo::append_history(&mut tx, transfer_id, TransferStatus::Created, None, None).await?;
     write_audit(
         &mut tx,

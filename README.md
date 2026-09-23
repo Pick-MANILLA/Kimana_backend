@@ -80,7 +80,7 @@ src/
     quote.rs           firm quotes
     transfers/         service · repo · state_machine · engine · routes
     ledger.rs          balance reads · post_entry (running balance under a lock)
-  settlement/          alloy client for the SettlementVault: bindings · units · client · error
+  settlement/          SettlementVault: bindings · units · client · error · listener (confirmed events → transfer states)
   seed.rs              demo tenant, mirrors the frontend mock store
 tests/                 integration tests — tower::oneshot against the real Router + Postgres
 integration/           drop-in live client + wiring notes for Kimana_frontend
@@ -134,6 +134,7 @@ computed under an account row lock):
 | `→ FUNDED` | `-sendAmount` from the send-currency account (rejects `INSUFFICIENT_FUNDS` if short) |
 | `→ SETTLED` | `+receiveAmount` to the receive-currency account |
 | `→ COMPLETED` | `-receiveAmount` from the receive-currency account (paid to the beneficiary) |
+| `→ REVERSING` from `SETTLED`/`PAYING_OUT` | `-receiveAmount` from the receive-currency account (payout failed on-chain) |
 | `→ REVERSED` | `+sendAmount` back to the send account, linked via `reversal_of_entry_id` |
 
 ## On-chain settlement
@@ -160,8 +161,35 @@ Config: `SETTLEMENT_RPC_URL` and `SETTLEMENT_VAULT_ADDRESS`. The operator
 signer is passed to `SettlementClient::new` and never read from the
 environment.
 
-Backend-driven lock, settle, cancel and refund against the contract's
-`make e2e` Anvil setup (needs Foundry and `make install` in the contract repo):
+### Event listener
+
+`settlement::listener` runs in the server process when settlement is
+configured. It reads vault events at least `SETTLEMENT_CONFIRMATIONS` blocks
+deep and applies them to the transfer whose `settlement_ref` matches:
+
+| Event | Backend effect |
+|---|---|
+| `QuoteLocked` | recorded + audited; status unchanged (the transfer is past `QUOTED` by then) |
+| `SettlementInitiated` | `SETTLING → SETTLED` |
+| `SettlementReturned` | `→ REVERSING`, with `-receiveAmount` undoing the conversion |
+| `SettlementRefunded` | `→ REVERSED`, with `+sendAmount` back to the customer |
+| `QuoteCancelled` | `→ EXPIRED` if the locked quote had expired, else `REJECTED` |
+| `RateDivergence`, `ReferenceRateStale` | recorded on the transfer + audited |
+
+- **Idempotent:** each log is one `settlement_events` row, keyed by
+  `(tx_hash, log_index)` and written in the same transaction as its
+  transition, so a replayed log is skipped.
+- **Resumable:** `settlement_cursor` stores the last processed block; a
+  restart resumes after it (`SETTLEMENT_START_BLOCK` for the first run).
+- **Reorgs:** only confirmed blocks are read. If the cursor block's hash
+  changes (a reorg deeper than the confirmation depth), the listener stops and
+  logs an error for ops instead of rewriting the append-only ledger.
+- While it is on, the simulator stops at `SETTLING`: only the chain settles.
+
+Backend-driven lock, settle, cancel and refund, plus the listener's happy,
+refund, cancel, alert, restart and reorg cases, against the contract's
+`make e2e` Anvil setup (needs Foundry, `make install` in the contract repo,
+and Postgres):
 
 ```bash
 KIMANA_CONTRACT_DIR=../kimana_contract bash scripts/settlement-e2e.sh

@@ -161,7 +161,8 @@ pub async fn seed(pool: &PgPool) -> anyhow::Result<()> {
         "truncate audit_log, ledger_entries, transfer_state_history, transfers, quotes,
                   recipients, fx_rates, fx_secondary_rates, fx_rate_divergence_events, kyb_checks,
                   onboarding_documents, onboarding_principals,
-                  onboarding_applications, accounts, customers, sessions, users
+                  onboarding_applications, accounts, customers, sessions, users,
+                  settlement_events, settlement_cursor
          restart identity cascade",
     )
     .execute(&mut *tx)

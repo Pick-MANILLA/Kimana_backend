@@ -118,6 +118,21 @@ jobs:
   settlement-anvil:
     name: Settlement vs Anvil (kimana_contract LocalE2E)
     runs-on: ubuntu-latest
+    # The listener tests apply vault events to real transfers.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: kimana
+          POSTGRES_PASSWORD: kimana
+          POSTGRES_DB: kimana
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
 
@@ -143,7 +158,7 @@ jobs:
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Lock, settle, cancel and refund against Anvil
+      - name: Settlement client and event listener against Anvil
         run: bash scripts/settlement-e2e.sh
         env:
           KIMANA_CONTRACT_DIR: kimana_contract

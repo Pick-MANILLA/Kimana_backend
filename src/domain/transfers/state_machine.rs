@@ -12,8 +12,9 @@ pub fn allowed(from: TransferStatus) -> &'static [TransferStatus] {
         AwaitingFunds => &[Funded, Rejected, Expired],
         Funded => &[Settling, Rejected],
         Settling => &[Settled, Rejected],
-        Settled => &[PayingOut],
-        PayingOut => &[Completed],
+        // A failed payout comes back on-chain (`returnSettlement`) from either.
+        Settled => &[PayingOut, Reversing],
+        PayingOut => &[Completed, Reversing],
         Completed => &[Reversing],
         Rejected => &[],
         Expired => &[],

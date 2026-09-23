@@ -323,3 +323,15 @@ pub async fn set_status(
         .await?;
     Ok(())
 }
+
+/// Stores the vault key for a just-inserted transfer. Must run in the create
+/// transaction, so a transfer never exists without one.
+pub async fn set_settlement_ref(conn: &mut sqlx::PgConnection, transfer_id: Uuid) -> ApiResult<()> {
+    let settlement_ref = crate::settlement::units::transfer_ref(&transfer_id.to_string());
+    sqlx::query("update transfers set settlement_ref = $2 where id = $1")
+        .bind(transfer_id)
+        .bind(settlement_ref.as_slice())
+        .execute(conn)
+        .await?;
+    Ok(())
+}

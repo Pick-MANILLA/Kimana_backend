@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # Backend-driven settlement against kimana_contract's `make e2e` Anvil setup:
 # starts Anvil, deploys and seeds the vault with LocalE2E.s.sol, unpauses it
-# (the scenario ends paused), then runs tests/settlement_anvil.rs.
+# (the scenario ends paused), then runs tests/settlement_anvil.rs (the client)
+# and tests/settlement_listener.rs (the event listener, which also needs Postgres).
 #
 #   KIMANA_CONTRACT_DIR=../kimana_contract bash scripts/settlement-e2e.sh
 #
-# Needs Foundry (anvil, forge, cast) and `make install` already run in the contract repo.
+# Needs Foundry (anvil, forge, cast), `make install` already run in the contract
+# repo, and Postgres at DATABASE_URL (docker compose up -d).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -32,4 +34,4 @@ cast send "$VAULT" "unpause()" --private-key "$ADMIN_PK" --rpc-url "$RPC" >/dev/
 # One thread: every test signs as the same operator, and parallel sends would race on the nonce.
 cd "$ROOT"
 SETTLEMENT_RPC_URL="$RPC" SETTLEMENT_VAULT_ADDRESS="$VAULT" \
-  cargo test --test settlement_anvil -- --ignored --test-threads=1
+  cargo test --test settlement_anvil --test settlement_listener -- --ignored --test-threads=1
