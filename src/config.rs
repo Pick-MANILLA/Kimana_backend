@@ -53,6 +53,17 @@ pub struct Config {
     /// never see a failure to react to.
     pub fx_call_timeout_ms: u64,
 
+    /// True when `SETTLEMENT_RPC_URL` is set: confirmed vault events, not the
+    /// simulator, move a transfer from SETTLING onwards.
+    pub settlement_onchain: bool,
+    /// Blocks a vault event must be buried under before the listener applies it.
+    pub settlement_confirmations: u64,
+    /// Pause between listener polls.
+    pub settlement_poll_ms: u64,
+    /// First block the listener scans when it has no stored cursor yet
+    /// (the vault's deployment block).
+    pub settlement_start_block: u64,
+
     /// True under integration tests: disables FX jitter and other nondeterminism.
     pub is_test: bool,
 
@@ -105,6 +116,10 @@ impl Config {
             fx_breaker_reset_seconds: num("FX_BREAKER_RESET_SECONDS", 10),
             fx_cache_max_age_seconds: num("FX_CACHE_MAX_AGE_SECONDS", 300),
             fx_call_timeout_ms: num("FX_CALL_TIMEOUT_MS", 2_000),
+            settlement_onchain: env::var("SETTLEMENT_RPC_URL").is_ok(),
+            settlement_confirmations: num("SETTLEMENT_CONFIRMATIONS", 3),
+            settlement_poll_ms: num("SETTLEMENT_POLL_MS", 2_000),
+            settlement_start_block: num("SETTLEMENT_START_BLOCK", 0),
             is_test: false,
             cookie_secure: num("COOKIE_SECURE", true),
         }
@@ -122,6 +137,7 @@ impl Config {
             max_aggregate_exposure_minor: 20_000_000,
             compliance_amount_threshold_minor: 5_000_000,
             fx_divergence_threshold_percent: 1.0,
+            settlement_onchain: false,
             is_test: true,
             cookie_secure: false,
             ..Config::from_env()

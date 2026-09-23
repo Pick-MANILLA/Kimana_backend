@@ -6,12 +6,14 @@
 //! - `FUNDED`: `-sendAmount` from the send-currency account
 //! - `SETTLED`: `+receiveAmount` to the receive-currency account
 //! - `COMPLETED`: `-receiveAmount` from the receive-currency account (to beneficiary)
+//! - `REVERSING` from `SETTLED`/`PAYING_OUT` (payout failed, partner returned
+//!   the USDC on-chain): `-receiveAmount`, undoing the conversion
 //! - `REVERSED`: `+sendAmount` back to the send account, linked
 //!
 //! Net effect on a completed transfer: `-sendAmount` in the send currency.
 
 use super::repo;
-use super::state_machine::{assert_transition, forward_step};
+use super::state_machine::{allowed, assert_transition, forward_step};
 use crate::audit::{write_audit, AuditEntry};
 use crate::contract::common::CurrencyCode;
 use crate::contract::transfer::TransferStatus::{self, *};
@@ -107,6 +109,7 @@ fn payload_for(
 async fn post_ledger_for(
     conn: &mut sqlx::PgConnection,
     t: &LockedTransfer,
+    from: TransferStatus,
     to: TransferStatus,
 ) -> ApiResult<()> {
     let send_ccy = CurrencyCode::parse(&t.send_currency)?;
@@ -164,6 +167,23 @@ async fn post_ledger_for(
             )
             .await?;
         }
+        // From COMPLETED the receive amount already left to the beneficiary;
+        // only a payout that never happened has a conversion to undo.
+        Reversing if matches!(from, Settled | PayingOut) => {
+            let acct = get_or_create_account(&mut *conn, t.customer_id, recv_ccy).await?;
+            post_ledger_entry(
+                &mut *conn,
+                LedgerPosting {
+                    account_id: acct,
+                    transfer_id: t.id,
+                    amount_minor: -t.receive_amount_minor,
+                    currency: recv_ccy,
+                    description: &format!("Transfer {} — conversion reversed", t.reference),
+                    reversal_of_entry_id: None,
+                },
+            )
+            .await?;
+        }
         _ => {}
     }
     Ok(())
@@ -180,7 +200,7 @@ async fn apply(
     assert_transition(from, to)?;
     repo::append_history(&mut *conn, t.id, to, payload.as_ref(), None).await?;
     repo::set_status(&mut *conn, t.id, to).await?;
-    post_ledger_for(&mut *conn, t, to).await?;
+    post_ledger_for(&mut *conn, t, from, to).await?;
 
     let mut after = json!({ "status": to.as_str() });
     if let Some(Value::Object(fields)) = &payload {
@@ -222,7 +242,10 @@ pub async fn advance_once(
         ));
     }
 
-    let Some(to) = forward_step(from) else {
+    // With on-chain settlement, only a confirmed SettlementInitiated moves
+    // SETTLING on (see `settlement::listener`).
+    let onchain_hold = from == Settling && state.config.settlement_onchain;
+    let Some(to) = forward_step(from).filter(|_| !onchain_hold) else {
         tx.commit().await?;
         return Ok(from);
     };
@@ -347,29 +370,7 @@ pub async fn reverse_transfer(
     )
     .await?;
 
-    let funding_entry_id: Option<Uuid> = sqlx::query_scalar(
-        "select id from ledger_entries
-          where transfer_id = $1 and amount_minor < 0 and description like '%funded%'
-          order by posted_at limit 1",
-    )
-    .bind(t.id)
-    .fetch_optional(&mut *tx)
-    .await?;
-
-    let send_ccy = CurrencyCode::parse(&t.send_currency)?;
-    let send_acct = get_or_create_account(&mut tx, t.customer_id, send_ccy).await?;
-    let (entry_id, _) = post_ledger_entry(
-        &mut tx,
-        LedgerPosting {
-            account_id: send_acct,
-            transfer_id: t.id,
-            amount_minor: t.send_amount_minor,
-            currency: send_ccy,
-            description: &format!("Transfer {} — reversed", t.reference),
-            reversal_of_entry_id: funding_entry_id,
-        },
-    )
-    .await?;
+    let entry_id = post_send_refund(&mut tx, &t).await?;
 
     apply(
         &mut tx,
@@ -383,6 +384,119 @@ pub async fn reverse_transfer(
 
     tx.commit().await?;
     Ok(entry_id.to_string())
+}
+
+/// The compensating `+sendAmount` that closes a reversal, linked to the
+/// original funding debit.
+async fn post_send_refund(conn: &mut sqlx::PgConnection, t: &LockedTransfer) -> ApiResult<Uuid> {
+    let funding_entry_id: Option<Uuid> = sqlx::query_scalar(
+        "select id from ledger_entries
+          where transfer_id = $1 and amount_minor < 0 and description like '%funded%'
+          order by posted_at limit 1",
+    )
+    .bind(t.id)
+    .fetch_optional(&mut *conn)
+    .await?;
+
+    let send_ccy = CurrencyCode::parse(&t.send_currency)?;
+    let send_acct = get_or_create_account(&mut *conn, t.customer_id, send_ccy).await?;
+    let (entry_id, _) = post_ledger_entry(
+        &mut *conn,
+        LedgerPosting {
+            account_id: send_acct,
+            transfer_id: t.id,
+            amount_minor: t.send_amount_minor,
+            currency: send_ccy,
+            description: &format!("Transfer {} — reversed", t.reference),
+            reversal_of_entry_id: funding_entry_id,
+        },
+    )
+    .await?;
+    Ok(entry_id)
+}
+
+// === On-chain transitions
+
+/// Where a confirmed vault event wants the transfer to be.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OnchainTarget {
+    /// `SettlementInitiated`: SETTLED (via SETTLING when still FUNDED).
+    Settled,
+    /// `SettlementReturned`: REVERSING.
+    Reversing,
+    /// `SettlementRefunded`: REVERSED.
+    Reversed,
+    /// `QuoteCancelled`: EXPIRED if the locked quote had expired, else REJECTED.
+    Cancelled { quote_expired: bool },
+}
+
+/// What the listener did with an event, recorded on the event row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OnchainOutcome {
+    Applied(TransferStatus),
+    /// Already there: a replay, or the backend moved it first.
+    AlreadyApplied(TransferStatus),
+    /// The transfer's status does not allow this event. Left for ops.
+    Ignored(TransferStatus),
+}
+
+/// Applies a confirmed vault event inside the listener's transaction, so the
+/// event row and the transition commit together. Never errors on an
+/// unexpected state: the chain is not wrong, the backend is behind or ahead,
+/// and retrying the log forever would stall every later event.
+pub async fn apply_onchain(
+    conn: &mut sqlx::PgConnection,
+    transfer_id: Uuid,
+    target: OnchainTarget,
+    payload: Value,
+) -> ApiResult<OnchainOutcome> {
+    let t = lock(&mut *conn, transfer_id).await?;
+    let from = TransferStatus::parse(&t.current_status)?;
+
+    let path: &[TransferStatus] = match (target, from) {
+        (OnchainTarget::Settled, Settled | PayingOut | Completed) => &[],
+        (OnchainTarget::Settled, Funded) => &[Settling, Settled],
+        (OnchainTarget::Settled, _) => &[Settled],
+        (OnchainTarget::Reversing, Reversing | Reversed) => &[],
+        (OnchainTarget::Reversing, _) => &[Reversing],
+        (OnchainTarget::Reversed, Reversed) => &[],
+        (OnchainTarget::Reversed, Settled | PayingOut) => &[Reversing, Reversed],
+        (OnchainTarget::Reversed, _) => &[Reversed],
+        (OnchainTarget::Cancelled { .. }, Expired | Rejected) => &[],
+        // EXPIRED is not reachable once funded; REJECTED always is.
+        (
+            OnchainTarget::Cancelled {
+                quote_expired: true,
+            },
+            s,
+        ) if allowed(s).contains(&Expired) => &[Expired],
+        (OnchainTarget::Cancelled { .. }, _) => &[Rejected],
+    };
+
+    if path.is_empty() {
+        return Ok(OnchainOutcome::AlreadyApplied(from));
+    }
+    let mut current = from;
+    for &to in path {
+        if !allowed(current).contains(&to) {
+            return Ok(OnchainOutcome::Ignored(from));
+        }
+        current = to;
+    }
+
+    let mut current = from;
+    for &to in path {
+        if to == Reversed {
+            let entry_id = post_send_refund(&mut *conn, &t).await?;
+            let mut p = payload.clone();
+            p["reversalLedgerEntryId"] = json!(entry_id.to_string());
+            apply(&mut *conn, &t, None, current, to, Some(p)).await?;
+        } else {
+            apply(&mut *conn, &t, None, current, to, Some(payload.clone())).await?;
+        }
+        current = to;
+    }
+    Ok(OnchainOutcome::Applied(current))
 }
 
 /// A compliance analyst's disposition of a held SCREENED transfer.

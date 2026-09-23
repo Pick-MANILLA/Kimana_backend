@@ -22,7 +22,10 @@ pub struct TestApp {
 
 impl TestApp {
     pub async fn new() -> Self {
-        let config = Config::test();
+        Self::with_config(Config::test()).await
+    }
+
+    pub async fn with_config(config: Config) -> Self {
         let pool = db::connect(&config.database_url)
             .await
             .expect("connect to test database (is Postgres up?)");
