@@ -106,7 +106,7 @@ pub async fn customer_open_exposure_minor(
     .bind(currency.as_str())
     .fetch_one(conn)
     .await?;
-    return Ok(sum);
+    Ok(sum)
 }
 
 /// A customer's own exposure ceilings; `None` falls back to the config default.
@@ -132,10 +132,10 @@ pub async fn lock_customer_limits(
         .bind(customer_id)
         .fetch_one(conn)
         .await?;
-    return Ok(CustomerLimits {
+    Ok(CustomerLimits {
         max_transfer_amount_minor,
         max_aggregate_exposure_minor,
-    });
+    })
 }
 
 /// Sets (or, with `None`, clears) a customer's per-transfer send-amount
@@ -168,10 +168,9 @@ pub async fn platform_open_exposure_by_currency(
     ))
     .fetch_all(conn)
     .await?;
-    return rows
-        .into_iter()
+    rows.into_iter()
         .map(|(currency, minor)| Ok((CurrencyCode::parse(&currency)?, minor)))
-        .collect();
+        .collect()
 }
 
 pub struct LedgerPosting<'a> {
