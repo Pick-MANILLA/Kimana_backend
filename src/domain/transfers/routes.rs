@@ -33,6 +33,7 @@ pub(crate) struct CreateTransferBody {
 #[utoipa::path(
     post,
     path = "/transfers",
+    operation_id = "create_transfer",
     tag = "transfers",
     request_body = CreateTransferBody,
     params(
@@ -168,6 +169,7 @@ pub(crate) async fn screening_decision(
 #[utoipa::path(
     get,
     path = "/transfers",
+    operation_id = "list_transfers",
     tag = "transfers",
     params(ListQuery),
     responses(

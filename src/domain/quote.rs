@@ -205,6 +205,7 @@ pub fn routes() -> Router<AppState> {
 #[utoipa::path(
     post,
     path = "/quotes",
+    operation_id = "create_quote",
     tag = "quotes",
     request_body = RequestFirmQuoteBody,
     responses(

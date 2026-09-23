@@ -142,6 +142,7 @@ pub fn routes() -> Router<AppState> {
 #[utoipa::path(
     get,
     path = "/recipients",
+    operation_id = "list_recipients",
     tag = "recipients",
     responses(
         (status = 200, description = "Saved recipients", body = [Recipient]),
@@ -169,6 +170,7 @@ pub(crate) struct ValidateRecipientResponse {
 #[utoipa::path(
     post,
     path = "/recipients/validate",
+    operation_id = "validate_recipient",
     tag = "recipients",
     request_body = NewRecipientBody,
     responses(
@@ -191,6 +193,7 @@ pub(crate) async fn validate(
 #[utoipa::path(
     post,
     path = "/recipients",
+    operation_id = "save_recipient",
     tag = "recipients",
     request_body = SaveRecipientBody,
     responses(

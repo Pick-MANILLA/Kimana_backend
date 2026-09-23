@@ -212,3 +212,36 @@ pub fn build_app(state: AppState) -> Router {
         .layer(cors)
         .with_state(state)
 }
+
+#[cfg(test)]
+mod openapi_tests {
+    use super::ApiDoc;
+    use std::collections::HashMap;
+    use utoipa::OpenApi;
+
+    /// Swagger UI routes "Try it out" by operationId, so a duplicate makes
+    /// one endpoint silently execute another. utoipa defaults the id to the
+    /// handler's fn name, which collides easily (`create`, `list`).
+    #[test]
+    fn operation_ids_are_unique() {
+        let mut seen: HashMap<String, String> = HashMap::new();
+        for (path, item) in ApiDoc::openapi().paths.paths {
+            let ops = [
+                ("GET", item.get),
+                ("PUT", item.put),
+                ("POST", item.post),
+                ("DELETE", item.delete),
+                ("PATCH", item.patch),
+            ];
+            for (method, op) in ops {
+                let Some(id) = op.and_then(|op| op.operation_id) else {
+                    continue;
+                };
+                let here = format!("{method} {path}");
+                if let Some(prev) = seen.insert(id.clone(), here.clone()) {
+                    panic!("operationId `{id}` is used by both {prev} and {here}");
+                }
+            }
+        }
+    }
+}

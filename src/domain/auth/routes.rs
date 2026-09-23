@@ -1,6 +1,6 @@
 use super::service::{self, RegisterInput, SESSION_TTL_DAYS};
 use crate::contract::auth::SessionResponse;
-use crate::error::ApiResult;
+use crate::error::{ApiResult, ErrorResponse};
 use crate::http::{Body, SESSION_COOKIE_NAME};
 use crate::state::AppState;
 use axum::extract::State;
@@ -66,8 +66,8 @@ pub(crate) struct RegisterBody {
     request_body = RegisterBody,
     responses(
         (status = 201, description = "Account created", body = SessionResponse),
-        (status = 400, description = "Validation error"),
-        (status = 409, description = "Email already registered"),
+        (status = 400, description = "Validation error", body = ErrorResponse),
+        (status = 409, description = "Email already registered", body = ErrorResponse),
     )
 )]
 pub(crate) async fn register(
@@ -108,7 +108,7 @@ pub(crate) struct LoginBody {
     request_body = LoginBody,
     responses(
         (status = 200, description = "Authenticated", body = SessionResponse),
-        (status = 401, description = "Invalid credentials"),
+        (status = 401, description = "Invalid credentials", body = ErrorResponse),
     )
 )]
 pub(crate) async fn login(
