@@ -60,6 +60,9 @@ pub struct ApiError {
     pub code: ErrorCode,
     pub message: String,
     pub retryable: bool,
+    /// Overrides `code.status()` for the few HTTP-level errors whose status
+    /// has no `ErrorCode` of its own (405, 408, 413).
+    status: Option<StatusCode>,
 }
 
 impl ApiError {
@@ -68,7 +71,12 @@ impl ApiError {
             code,
             message: message.into(),
             retryable: code.default_retryable(),
+            status: None,
         }
+    }
+    pub fn with_status(mut self, status: StatusCode) -> Self {
+        self.status = Some(status);
+        self
     }
     pub fn retryable(mut self, retryable: bool) -> Self {
         self.retryable = retryable;
@@ -127,7 +135,7 @@ impl std::error::Error for ApiError {}
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         (
-            self.code.status(),
+            self.status.unwrap_or(self.code.status()),
             Json(json!({
                 "code": self.code,
                 "message": self.message,

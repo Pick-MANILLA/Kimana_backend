@@ -4,9 +4,10 @@ use crate::contract::onboarding::{
     UploadedDocument,
 };
 use crate::error::{ApiError, ApiResult, ErrorResponse};
-use crate::http::{Body, Session};
+use crate::http::{request_shape_error, Body, Multipart, Path, Session};
 use crate::state::AppState;
-use axum::extract::{DefaultBodyLimit, Multipart, Path, State};
+use axum::extract::multipart::MultipartError;
+use axum::extract::{DefaultBodyLimit, State};
 use axum::http::StatusCode;
 use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
@@ -171,13 +172,14 @@ pub(crate) struct DocumentUploadForm {
         (status = 400, description = "Missing file or invalid type", body = ErrorResponse),
         (status = 401, description = "Not authenticated", body = ErrorResponse),
         (status = 404, description = "Application not found", body = ErrorResponse),
+        (status = 413, description = "File exceeds the upload size limit", body = ErrorResponse),
     ),
     security(("cookieAuth" = []))
 )]
 pub(crate) async fn upload_document(
     State(state): State<AppState>,
     session: Session,
-    mut multipart: Multipart,
+    Multipart(mut multipart): Multipart,
 ) -> ApiResult<Json<UploadedDocument>> {
     let mut bytes: Option<Vec<u8>> = None;
     let mut file_name = String::new();
@@ -185,39 +187,19 @@ pub(crate) async fn upload_document(
     let mut doc_type: Option<String> = None;
     let mut application_id: Option<String> = None;
 
-    while let Some(field) = multipart
-        .next_field()
-        .await
-        .map_err(|e| ApiError::validation(e.to_string()))?
-    {
+    while let Some(field) = multipart.next_field().await.map_err(multipart_error)? {
         let name = field.name().map(str::to_string);
         match name.as_deref() {
             Some("file") => {
                 file_name = field.file_name().unwrap_or("upload").to_string();
                 mime_type = field.content_type().unwrap_or("").to_string();
-                bytes = Some(
-                    field
-                        .bytes()
-                        .await
-                        .map_err(|e| ApiError::validation(e.to_string()))?
-                        .to_vec(),
-                );
+                bytes = Some(field.bytes().await.map_err(multipart_error)?.to_vec());
             }
             Some("type") => {
-                doc_type = Some(
-                    field
-                        .text()
-                        .await
-                        .map_err(|e| ApiError::validation(e.to_string()))?,
-                );
+                doc_type = Some(field.text().await.map_err(multipart_error)?);
             }
             Some("applicationId") => {
-                application_id = Some(
-                    field
-                        .text()
-                        .await
-                        .map_err(|e| ApiError::validation(e.to_string()))?,
-                );
+                application_id = Some(field.text().await.map_err(multipart_error)?);
             }
             _ => {}
         }
@@ -242,6 +224,10 @@ pub(crate) async fn upload_document(
     )
     .await?;
     Ok(Json(saved))
+}
+
+fn multipart_error(err: MultipartError) -> ApiError {
+    request_shape_error(err.status(), err.body_text())
 }
 
 #[utoipa::path(
