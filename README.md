@@ -61,6 +61,7 @@ status mapping in `docs/backend-plan.md` §02.
 ## Layout
 
 ```
+abi/                   SettlementVault ABI, copied from kimana_contract
 migrations/            forward-only SQL, embedded via sqlx::migrate!
 src/
   main.rs              server entrypoint (migrate + serve)
@@ -79,9 +80,11 @@ src/
     quote.rs           firm quotes
     transfers/         service · repo · state_machine · engine · routes
     ledger.rs          balance reads · post_entry (running balance under a lock)
+  settlement/          alloy client for the SettlementVault: bindings · units · client · error
   seed.rs              demo tenant, mirrors the frontend mock store
 tests/                 integration tests — tower::oneshot against the real Router + Postgres
 integration/           drop-in live client + wiring notes for Kimana_frontend
+scripts/               settlement-e2e.sh: Anvil + LocalE2E.s.sol + tests/settlement_anvil.rs
 ```
 
 ## Contract fidelity
@@ -132,6 +135,40 @@ computed under an account row lock):
 | `→ SETTLED` | `+receiveAmount` to the receive-currency account |
 | `→ COMPLETED` | `-receiveAmount` from the receive-currency account (paid to the beneficiary) |
 | `→ REVERSED` | `+sendAmount` back to the send account, linked via `reversal_of_entry_id` |
+
+## On-chain settlement
+
+`src/settlement/` calls the SettlementVault from
+[kimana_contract](https://github.com/Pick-MANILLA/kimana_contract) with alloy.
+Bindings come from `abi/SettlementVault.json`, a copy of the contract repo's
+file: copy it again whenever the contract's ABI changes.
+
+- `units`: `transfer_ref`, `quote_id`, `cents_to_usdc` / `usdc_to_cents`,
+  `RateE8` (8-decimal integer rate, parsed from a decimal string) and
+  `receive_amount_minor`. Integer only, and the parity tests pin them to the
+  contract's own test vectors.
+- `client`: `lock_quote`, `settle`, `cancel_quote`, `refund`. Each waits for
+  the receipt. `lock_quote` derives the counterparty amount with the vault's
+  formula and refuses to send an already-expired quote.
+- `error`: vault reverts decoded and mapped to API errors. An expired quote is
+  `RATE_EXPIRED`; reuse or a wrong lifecycle state is `CONFLICT`; a blocked
+  divergent rate or a paused vault is `PARTNER_FAILURE`; a limit breach is
+  `COMPLIANCE_HOLD`; a quote the vault rejects as malformed is a logged
+  `SERVER_ERROR`.
+
+Config: `SETTLEMENT_RPC_URL` and `SETTLEMENT_VAULT_ADDRESS`. The operator
+signer is passed to `SettlementClient::new` and never read from the
+environment.
+
+Backend-driven lock, settle, cancel and refund against the contract's
+`make e2e` Anvil setup (needs Foundry and `make install` in the contract repo):
+
+```bash
+KIMANA_CONTRACT_DIR=../kimana_contract bash scripts/settlement-e2e.sh
+```
+
+Not wired into the transfer lifecycle yet: `quotes.rate` is still stored as
+`f64`, and moving it to `RateE8` is its own change.
 
 ## Connecting the frontend
 

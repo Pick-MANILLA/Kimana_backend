@@ -113,3 +113,37 @@ jobs:
 
       - name: Compile Release Binaries
         run: cargo build --release --all-targets
+
+  # 5. Backend-driven settlement against kimana_contract's Anvil setup
+  settlement-anvil:
+    name: Settlement vs Anvil (kimana_contract LocalE2E)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Tracks the contract's main, so an ABI or rule change there that breaks this client fails here.
+      - name: Check out kimana_contract
+        uses: actions/checkout@v4
+        with:
+          repository: Pick-MANILLA/kimana_contract
+          path: kimana_contract
+          persist-credentials: false
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.5.1
+
+      - name: Install contract dependencies
+        run: make -C kimana_contract install
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Lock, settle, cancel and refund against Anvil
+        run: bash scripts/settlement-e2e.sh
+        env:
+          KIMANA_CONTRACT_DIR: kimana_contract
