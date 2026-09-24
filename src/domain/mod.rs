@@ -7,4 +7,5 @@ pub mod quote;
 pub mod recipients;
 pub mod resilience;
 pub mod screening;
+pub mod settlement_wallet;
 pub mod transfers;

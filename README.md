@@ -54,6 +54,8 @@ cross-process file lock (`serial_test`), so `cargo test` is safe to run as-is.
 | POST | `/quotes` | firm quote, `expiresAt = issuedAt + 90s` |
 | POST | `/transfers` | idempotent (`Idempotency-Key` header or body); parks at `AWAITING_FUNDS` |
 | GET | `/transfers` · `/transfers/{id}` · `/transfers/{id}/timeline` | `?status=` filter on the list |
+| GET | `/settlement/balance` · `/settlement/transactions` | USDC wallet; see [Settlement wallet](#settlement-wallet) |
+| POST | `/settlement/buy` · `/settlement/convert` | idempotent, like `/transfers` |
 
 Errors are `{ code, message, retryable }` (SCREAMING_SNAKE codes) with the
 status mapping in `docs/backend-plan.md` §02.
@@ -202,6 +204,30 @@ KIMANA_CONTRACT_DIR=../kimana_contract bash scripts/settlement-e2e.sh
 
 Not wired into the transfer lifecycle yet: `quotes.rate` is still stored as
 `f64`, and moving it to `RateE8` is its own change.
+
+## Settlement wallet
+
+`src/domain/settlement_wallet.rs` is the one customer surface that names
+USDC (issue #77, a scoped exception to the hidden-crypto rule). The
+SettlementVault holds pooled USDC and only moves it to or from partners, so
+there is no per-customer balance on-chain: the wallet is a ledger account
+with currency `USDC`, in cents like USD, and `ledger::get_balances` leaves it
+out so the dashboard never shows it.
+
+- `POST /settlement/buy` `{ amount: Money }` debits the local account and
+  credits USDC. `POST /settlement/convert` `{ usdcAmountMinor, currency }`
+  does the reverse. Both use the indicative `USD/<ccy>` rate (USDC = USD 1:1,
+  and exactly 1 for USD), floor in both directions, reject an overdraft,
+  take an idempotency key, and write one `settlement_trades` row, two ledger
+  legs and an `audit_log` row in one transaction.
+- `GET /settlement/transactions` lists the trades, newest first.
+- `GET /settlement/balance` adds a `network` block (chain id, vault, USDC
+  token, explorer) when `SETTLEMENT_CHAIN_ID` and `SETTLEMENT_VAULT_ADDRESS`
+  are set.
+
+No trade calls the vault. USDC reaches or leaves the pool only through the
+partner flows (`fund`, `settle`) in the transfer lifecycle. Sending USDC to a
+customer's own address would need a contract change.
 
 ## Connecting the frontend
 
