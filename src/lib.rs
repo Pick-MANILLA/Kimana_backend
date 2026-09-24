@@ -184,6 +184,10 @@ impl Modify for CookieAuth {
         domain::transfers::routes::get_one,
         domain::transfers::routes::timeline,
         domain::transfers::routes::screening_decision,
+        domain::settlement_wallet::balance,
+        domain::settlement_wallet::buy,
+        domain::settlement_wallet::convert,
+        domain::settlement_wallet::transactions,
     ),
     components(schemas(
         error::ErrorResponse,
@@ -200,6 +204,7 @@ impl Modify for CookieAuth {
         (name = "recipients", description = "Payout recipients"),
         (name = "quotes", description = "Firm quotes"),
         (name = "transfers", description = "Transfer lifecycle"),
+        (name = "settlement", description = "USDC settlement wallet: balance, buy, convert, history"),
     )
 )]
 struct ApiDoc;
@@ -243,6 +248,7 @@ pub fn build_app(state: AppState) -> Router {
         .merge(domain::recipients::routes())
         .merge(domain::quote::routes())
         .merge(domain::transfers::routes())
+        .merge(domain::settlement_wallet::routes())
         .fallback(route_not_found)
         .method_not_allowed_fallback(method_not_allowed)
         .layer(DefaultBodyLimit::max(DEFAULT_BODY_LIMIT))

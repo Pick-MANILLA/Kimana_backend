@@ -65,6 +65,13 @@ pub struct Config {
     pub settlement_start_block: u64,
     /// Largest block range per `eth_getLogs`; keep it within the RPC's cap.
     pub settlement_log_range: u64,
+    /// Shown by `GET /settlement/balance` so the wallet can name the chain.
+    /// The network block appears only when both the chain id and
+    /// `SETTLEMENT_VAULT_ADDRESS` are set; the others are optional extras.
+    pub settlement_chain_id: Option<u64>,
+    pub settlement_vault_address: Option<String>,
+    pub settlement_usdc_address: Option<String>,
+    pub settlement_explorer_url: Option<String>,
 
     /// True under integration tests: disables FX jitter and other nondeterminism.
     pub is_test: bool,
@@ -123,6 +130,12 @@ impl Config {
             settlement_poll_ms: num("SETTLEMENT_POLL_MS", 2_000),
             settlement_start_block: num("SETTLEMENT_START_BLOCK", 0),
             settlement_log_range: num("SETTLEMENT_LOG_RANGE", 1_000),
+            settlement_chain_id: env::var("SETTLEMENT_CHAIN_ID")
+                .ok()
+                .and_then(|v| v.parse().ok()),
+            settlement_vault_address: env::var("SETTLEMENT_VAULT_ADDRESS").ok(),
+            settlement_usdc_address: env::var("SETTLEMENT_USDC_ADDRESS").ok(),
+            settlement_explorer_url: env::var("SETTLEMENT_EXPLORER_URL").ok(),
             is_test: false,
             cookie_secure: num("COOKIE_SECURE", true),
         }

@@ -15,8 +15,15 @@ struct BalanceRow {
     balance_minor: i64,
 }
 
+/// Ledger currency of the settlement wallet's USDC account. It is not a
+/// `CurrencyCode`: USDC only appears on the `/settlement` surface, so every
+/// other read of the customer's accounts leaves it out. Held in cents, like
+/// USD (`settlement::units::cents_to_usdc` converts to base units).
+pub const USDC: &str = "USDC";
+
 /// One AccountBalance per currency the customer holds — each the signed sum of
 /// that account's ledger_entries. `pending` has no source yet, so it is omitted.
+/// The USDC settlement account is excluded (see `USDC`).
 pub async fn get_balances(pool: &PgPool, customer_id: Uuid) -> ApiResult<Vec<AccountBalance>> {
     let rows: Vec<BalanceRow> = sqlx::query_as(
         "select a.id as account_id,
@@ -24,7 +31,7 @@ pub async fn get_balances(pool: &PgPool, customer_id: Uuid) -> ApiResult<Vec<Acc
                 coalesce(sum(le.amount_minor), 0)::bigint as balance_minor
            from accounts a
            left join ledger_entries le on le.account_id = a.id
-          where a.customer_id = $1
+          where a.customer_id = $1 and a.currency <> 'USDC'
           group by a.id, a.currency
           order by a.currency",
     )
@@ -52,11 +59,21 @@ pub async fn get_or_create_account(
     customer_id: Uuid,
     currency: CurrencyCode,
 ) -> ApiResult<Uuid> {
+    get_or_create_account_by_code(conn, customer_id, currency.as_str()).await
+}
+
+/// `get_or_create_account` for a ledger currency that isn't a `CurrencyCode`
+/// (the `USDC` settlement account).
+pub async fn get_or_create_account_by_code(
+    conn: &mut sqlx::PgConnection,
+    customer_id: Uuid,
+    currency: &str,
+) -> ApiResult<Uuid> {
     if let Some(id) = sqlx::query_scalar::<_, Uuid>(
         "select id from accounts where customer_id = $1 and currency = $2",
     )
     .bind(customer_id)
-    .bind(currency.as_str())
+    .bind(currency)
     .fetch_optional(&mut *conn)
     .await?
     {
@@ -66,7 +83,7 @@ pub async fn get_or_create_account(
         "insert into accounts (customer_id, currency) values ($1, $2) returning id",
     )
     .bind(customer_id)
-    .bind(currency.as_str())
+    .bind(currency)
     .fetch_one(&mut *conn)
     .await?;
     Ok(id)
@@ -183,33 +200,93 @@ pub struct LedgerPosting<'a> {
     pub reversal_of_entry_id: Option<Uuid>,
 }
 
-/// Appends one ledger entry, computing `running_balance_minor` under an account
-/// row lock so concurrent postings to the same account serialise.
+/// Appends one ledger entry for a transfer.
 pub async fn post_ledger_entry(
     conn: &mut sqlx::PgConnection,
     posting: LedgerPosting<'_>,
 ) -> ApiResult<(Uuid, i64)> {
+    append_entry(
+        conn,
+        posting.account_id,
+        posting.amount_minor,
+        posting.currency.as_str(),
+        posting.description,
+        EntrySource::Transfer(posting.transfer_id),
+        posting.reversal_of_entry_id,
+    )
+    .await
+}
+
+/// One leg of a settlement-wallet trade (`domain::settlement`).
+pub struct SettlementPosting<'a> {
+    pub account_id: Uuid,
+    pub trade_id: Uuid,
+    /// Signed minor units: positive = credit, negative = debit.
+    pub amount_minor: i64,
+    /// A `CurrencyCode` string, or `USDC`.
+    pub currency: &'a str,
+    pub description: &'a str,
+}
+
+pub async fn post_settlement_entry(
+    conn: &mut sqlx::PgConnection,
+    posting: SettlementPosting<'_>,
+) -> ApiResult<(Uuid, i64)> {
+    append_entry(
+        conn,
+        posting.account_id,
+        posting.amount_minor,
+        posting.currency,
+        posting.description,
+        EntrySource::SettlementTrade(posting.trade_id),
+        None,
+    )
+    .await
+}
+
+enum EntrySource {
+    Transfer(Uuid),
+    SettlementTrade(Uuid),
+}
+
+/// Appends one ledger entry, computing `running_balance_minor` under an account
+/// row lock so concurrent postings to the same account serialise.
+async fn append_entry(
+    conn: &mut sqlx::PgConnection,
+    account_id: Uuid,
+    amount_minor: i64,
+    currency: &str,
+    description: &str,
+    source: EntrySource,
+    reversal_of_entry_id: Option<Uuid>,
+) -> ApiResult<(Uuid, i64)> {
     sqlx::query("select id from accounts where id = $1 for update")
-        .bind(posting.account_id)
+        .bind(account_id)
         .execute(&mut *conn)
         .await?;
 
-    let prev = account_balance_minor(&mut *conn, posting.account_id).await?;
-    let running = prev + posting.amount_minor;
+    let prev = account_balance_minor(&mut *conn, account_id).await?;
+    let running = prev + amount_minor;
 
+    let (transfer_id, settlement_trade_id) = match source {
+        EntrySource::Transfer(id) => (Some(id), None),
+        EntrySource::SettlementTrade(id) => (None, Some(id)),
+    };
     let entry_id = sqlx::query_scalar::<_, Uuid>(
         "insert into ledger_entries
-           (account_id, transfer_id, amount_minor, currency, running_balance_minor, description, reversal_of_entry_id)
-         values ($1, $2, $3, $4, $5, $6, $7)
+           (account_id, transfer_id, settlement_trade_id, amount_minor, currency,
+            running_balance_minor, description, reversal_of_entry_id)
+         values ($1, $2, $3, $4, $5, $6, $7, $8)
          returning id",
     )
-    .bind(posting.account_id)
-    .bind(posting.transfer_id)
-    .bind(posting.amount_minor)
-    .bind(posting.currency.as_str())
+    .bind(account_id)
+    .bind(transfer_id)
+    .bind(settlement_trade_id)
+    .bind(amount_minor)
+    .bind(currency)
     .bind(running)
-    .bind(posting.description)
-    .bind(posting.reversal_of_entry_id)
+    .bind(description)
+    .bind(reversal_of_entry_id)
     .fetch_one(&mut *conn)
     .await?;
 

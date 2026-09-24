@@ -162,7 +162,7 @@ pub async fn seed(pool: &PgPool) -> anyhow::Result<()> {
                   recipients, fx_rates, fx_secondary_rates, fx_rate_divergence_events, kyb_checks,
                   onboarding_documents, onboarding_principals,
                   onboarding_applications, accounts, customers, sessions, users,
-                  settlement_events, settlement_cursor
+                  settlement_events, settlement_cursor, settlement_trades
          restart identity cascade",
     )
     .execute(&mut *tx)
