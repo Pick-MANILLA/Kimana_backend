@@ -27,6 +27,7 @@ async fn main() -> anyhow::Result<()> {
                 confirmations: config.settlement_confirmations,
                 start_block: config.settlement_start_block,
                 poll: Duration::from_millis(config.settlement_poll_ms),
+                max_range: config.settlement_log_range,
             },
         );
         tracing::info!(vault = %settlement.vault, "settlement listener started");

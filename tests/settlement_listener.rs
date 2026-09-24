@@ -74,6 +74,7 @@ impl Harness {
                 confirmations: CONFIRMATIONS,
                 start_block: 0,
                 poll: Duration::from_millis(100),
+                max_range: 1_000,
             },
         )
     }

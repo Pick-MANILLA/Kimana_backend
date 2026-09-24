@@ -63,6 +63,8 @@ pub struct Config {
     /// First block the listener scans when it has no stored cursor yet
     /// (the vault's deployment block).
     pub settlement_start_block: u64,
+    /// Largest block range per `eth_getLogs`; keep it within the RPC's cap.
+    pub settlement_log_range: u64,
 
     /// True under integration tests: disables FX jitter and other nondeterminism.
     pub is_test: bool,
@@ -120,6 +122,7 @@ impl Config {
             settlement_confirmations: num("SETTLEMENT_CONFIRMATIONS", 3),
             settlement_poll_ms: num("SETTLEMENT_POLL_MS", 2_000),
             settlement_start_block: num("SETTLEMENT_START_BLOCK", 0),
+            settlement_log_range: num("SETTLEMENT_LOG_RANGE", 1_000),
             is_test: false,
             cookie_secure: num("COOKIE_SECURE", true),
         }

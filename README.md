@@ -157,7 +157,10 @@ file: copy it again whenever the contract's ABI changes.
   `COMPLIANCE_HOLD`; a quote the vault rejects as malformed is a logged
   `SERVER_ERROR`.
 
-Config: `SETTLEMENT_RPC_URL` and `SETTLEMENT_VAULT_ADDRESS`. The operator
+Config: `SETTLEMENT_RPC_URL` and `SETTLEMENT_VAULT_ADDRESS`. The testnet
+vault is on Base Sepolia (chain 84532) at
+`0x89c1EE7c7888154Fb82e868f36bA5Dd3d4D80Faf`, deployed at block 47240140;
+the values are in `.env.example`. The operator
 signer is passed to `SettlementClient::new` and never read from the
 environment.
 
@@ -181,6 +184,8 @@ deep and applies them to the transfer whose `settlement_ref` matches:
   transition, so a replayed log is skipped.
 - **Resumable:** `settlement_cursor` stores the last processed block; a
   restart resumes after it (`SETTLEMENT_START_BLOCK` for the first run).
+  Logs are read `SETTLEMENT_LOG_RANGE` blocks at a time (default 1,000, the
+  cap on `sepolia.base.org`).
 - **Reorgs:** only confirmed blocks are read. If the cursor block's hash
   changes (a reorg deeper than the confirmation depth), the listener stops and
   logs an error for ops instead of rewriting the append-only ledger.
