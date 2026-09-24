@@ -26,9 +26,6 @@ use std::time::Duration;
 use thiserror::Error;
 use uuid::Uuid;
 
-/// Largest block range asked of the node in one `eth_getLogs`.
-const MAX_RANGE: u64 = 2_000;
-
 #[derive(Debug, Error)]
 pub enum ListenerError {
     #[error("block {block} changed hash since it was processed: reorg deeper than the confirmation depth")]
@@ -55,6 +52,9 @@ pub struct ListenerConfig {
     pub confirmations: u64,
     pub start_block: u64,
     pub poll: Duration,
+    /// Largest block range asked of the node in one `eth_getLogs`. Public
+    /// RPCs cap it (sepolia.base.org allows 1,000).
+    pub max_range: u64,
 }
 
 pub struct SettlementListener {
@@ -116,7 +116,7 @@ impl SettlementListener {
 
         let mut start = from;
         while start <= confirmed {
-            let end = confirmed.min(start + MAX_RANGE - 1);
+            let end = confirmed.min(start + self.config.max_range.max(1) - 1);
             let mut logs = self.provider.get_logs(&self.filter(start, end)).await?;
             logs.sort_by_key(|l| (l.block_number, l.log_index));
             for log in &logs {
