@@ -244,9 +244,36 @@ pub async fn post_settlement_entry(
     .await
 }
 
+/// The credit for money a collection partner confirmed (`domain::collections`).
+pub struct InboundPosting<'a> {
+    pub account_id: Uuid,
+    pub payment_id: Uuid,
+    /// Signed minor units: positive = credit, negative = debit.
+    pub amount_minor: i64,
+    pub currency: CurrencyCode,
+    pub description: &'a str,
+}
+
+pub async fn post_inbound_entry(
+    conn: &mut sqlx::PgConnection,
+    posting: InboundPosting<'_>,
+) -> ApiResult<(Uuid, i64)> {
+    append_entry(
+        conn,
+        posting.account_id,
+        posting.amount_minor,
+        posting.currency.as_str(),
+        posting.description,
+        EntrySource::InboundPayment(posting.payment_id),
+        None,
+    )
+    .await
+}
+
 enum EntrySource {
     Transfer(Uuid),
     SettlementTrade(Uuid),
+    InboundPayment(Uuid),
 }
 
 /// Appends one ledger entry, computing `running_balance_minor` under an account
@@ -268,20 +295,23 @@ async fn append_entry(
     let prev = account_balance_minor(&mut *conn, account_id).await?;
     let running = prev + amount_minor;
 
-    let (transfer_id, settlement_trade_id) = match source {
-        EntrySource::Transfer(id) => (Some(id), None),
-        EntrySource::SettlementTrade(id) => (None, Some(id)),
+    let (transfer_id, settlement_trade_id, inbound_payment_id) = match source {
+        EntrySource::Transfer(id) => (Some(id), None, None),
+        EntrySource::SettlementTrade(id) => (None, Some(id), None),
+        EntrySource::InboundPayment(id) => (None, None, Some(id)),
     };
     let entry_id = sqlx::query_scalar::<_, Uuid>(
         "insert into ledger_entries
-           (account_id, transfer_id, settlement_trade_id, amount_minor, currency,
-            running_balance_minor, description, reversal_of_entry_id)
-         values ($1, $2, $3, $4, $5, $6, $7, $8)
+           (account_id, transfer_id, settlement_trade_id, inbound_payment_id,
+            amount_minor, currency, running_balance_minor, description,
+            reversal_of_entry_id)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          returning id",
     )
     .bind(account_id)
     .bind(transfer_id)
     .bind(settlement_trade_id)
+    .bind(inbound_payment_id)
     .bind(amount_minor)
     .bind(currency)
     .bind(running)
