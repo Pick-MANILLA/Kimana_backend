@@ -7,6 +7,7 @@ pub mod domain;
 pub mod error;
 pub mod http;
 pub mod ids;
+pub mod partners;
 pub mod routes;
 pub mod seed;
 pub mod settlement;
@@ -188,6 +189,13 @@ impl Modify for CookieAuth {
         domain::settlement_wallet::buy,
         domain::settlement_wallet::convert,
         domain::settlement_wallet::transactions,
+        domain::collections::create,
+        domain::collections::list,
+        domain::collections::get_one,
+        domain::collections::cancel,
+        domain::collections::accounts,
+        domain::collections::yellowcard_webhook,
+        domain::collections::bridge_webhook,
     ),
     components(schemas(
         error::ErrorResponse,
@@ -205,6 +213,7 @@ impl Modify for CookieAuth {
         (name = "quotes", description = "Firm quotes"),
         (name = "transfers", description = "Transfer lifecycle"),
         (name = "settlement", description = "USDC settlement wallet: balance, buy, convert, history"),
+        (name = "collections", description = "Receiving money: payment requests, receiving accounts, and the Yellow Card (NGN) and Bridge (USD) webhooks that credit them"),
     )
 )]
 struct ApiDoc;
@@ -249,6 +258,7 @@ pub fn build_app(state: AppState) -> Router {
         .merge(domain::quote::routes())
         .merge(domain::transfers::routes())
         .merge(domain::settlement_wallet::routes())
+        .merge(domain::collections::routes())
         .fallback(route_not_found)
         .method_not_allowed_fallback(method_not_allowed)
         .layer(DefaultBodyLimit::max(DEFAULT_BODY_LIMIT))

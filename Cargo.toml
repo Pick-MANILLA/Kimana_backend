@@ -21,10 +21,15 @@ path = "src/bin/seed.rs"
 name = "rescreen"
 path = "src/bin/rescreen.rs"
 
+[[bin]]
+name = "link-bridge"
+path = "src/bin/link_bridge.rs"
+
 [dependencies]
 alloy = { version = "2.5", default-features = false, features = ["std", "contract", "provider-http", "signer-local", "sol-types", "json", "rpc-types", "reqwest-rustls-tls"] }
 anyhow = "1"
 argon2 = "0.6.0"
+base64 = "0.22"
 axum = { version = "0.8", features = ["multipart"] }
 axum-extra = { version = "0.12.6", default-features = false, features = ["cookie"] }
 chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
@@ -32,6 +37,8 @@ dotenvy = "0.15"
 hex = "0.4.3"
 rand = "0.8"
 regex = "1"
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "query"] }
+rsa = "0.9"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.11.0"

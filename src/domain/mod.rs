@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod collections;
 pub mod dashboard;
 pub mod fx;
 pub mod ledger;

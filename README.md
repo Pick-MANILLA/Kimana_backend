@@ -56,6 +56,10 @@ cross-process file lock (`serial_test`), so `cargo test` is safe to run as-is.
 | GET | `/transfers` · `/transfers/{id}` · `/transfers/{id}/timeline` | `?status=` filter on the list |
 | GET | `/settlement/balance` · `/settlement/transactions` | USDC wallet; see [Settlement wallet](#settlement-wallet) |
 | POST | `/settlement/buy` · `/settlement/convert` | idempotent, like `/transfers` |
+| POST | `/collections` | payment request with pay-in instructions; idempotent, like `/transfers` |
+| GET | `/collections` · `/collections/{id}` · POST `/collections/{id}/cancel` | see [Collections](#collections) |
+| GET | `/receiving-accounts` | the customer's standing USD account, once linked |
+| POST | `/webhooks/yellowcard` · `/webhooks/bridge` | partner-signed; credit inbound money |
 
 Errors are `{ code, message, retryable }` (SCREAMING_SNAKE codes) with the
 status mapping in `docs/backend-plan.md` §02.
@@ -228,6 +232,51 @@ out so the dashboard never shows it.
 No trade calls the vault. USDC reaches or leaves the pool only through the
 partner flows (`fund`, `settle`) in the transfer lifecycle. Sending USDC to a
 customer's own address would need a contract change.
+
+## Collections
+
+`src/domain/collections.rs` is the receive side (issue #79): the customer is
+the payee. `POST /collections` `{ amount: Money, payerName?, note?,
+expiresAt? }` creates a payment request with a reference (`CL-XXXXXX`) and a
+`payIn` block telling the payer where to send the money. The currency picks
+the partner (`src/partners/`):
+
+- **NGN goes through Yellow Card.** Each request opens its own force-accepted
+  bank-transfer receive (`sequenceId` = collection id), and `payIn` is that
+  receive's bank account. The account only takes money while the receive is
+  open, so the request's `expiresAt` is capped at the receive's (about 30
+  minutes in Yellow Card's docs). Cancelling a request cancels the receive
+  first; if Yellow Card refuses, the request stays open.
+  `POST /webhooks/yellowcard` checks `X-YC-Signature` (base64 HMAC-SHA256 of
+  the raw body under the API secret), then fetches the receive back. It
+  credits `convertedAmount` in NGN once the status is `complete`.
+- **USD goes through Bridge.** Each customer has one standing US virtual
+  account (ACH or wire), delivering USDC to `BRIDGE_DESTINATION_ADDRESS`, or
+  to the settlement vault by default. Ops links it after the customer has
+  passed Bridge's own KYB:
+  `cargo run --bin link-bridge -- <customer-id> <bridge-customer-id>`. This is
+  a CLI because there is no operator role to guard a route with yet.
+  `GET /receiving-accounts` shows the account. `POST /webhooks/bridge` checks
+  `X-Webhook-Signature` (RSA over `SHA-256("<t>.<body>")` with the endpoint's
+  public key, refused past 10 minutes) and credits every `payment_processed`
+  deposit in USD, flooring to the cent. A deposit whose memo quotes an open
+  request's reference (with or without the hyphen) also marks that request
+  paid.
+
+Money a partner confirms is always credited, even when it differs from the
+request or arrives after it closed. The request's `payment` block shows what
+actually arrived. A late Yellow Card payment still marks its request paid,
+because only that payer could have used the account. A late Bridge deposit
+does not. Each payment is one `inbound_payments` row (keyed by the partner's
+id, so redeliveries are no-ops), one ledger credit pointing at it, and an
+`audit_log` row, all in one transaction.
+
+Status is `PENDING`, then `PAID` or `CANCELLED`. `EXPIRED` isn't stored: a
+pending request past `expiresAt` reads as expired.
+
+Open questions: who bears partner fees (credits are what the partner reports
+as received), and whether Bridge's `amount` or `subtotal_amount` is the net
+delivered figure. Check both against sandbox deposits before going live.
 
 ## Connecting the frontend
 
