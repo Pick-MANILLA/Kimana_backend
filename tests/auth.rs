@@ -121,3 +121,76 @@ async fn session_requires_authentication() {
 fn common_test_email() -> &'static str {
     kimana_backend::seed::DEMO_EMAIL
 }
+
+fn luhn_valid(number: &str) -> bool {
+    let sum: u32 = number
+        .chars()
+        .rev()
+        .enumerate()
+        .map(|(i, c)| {
+            let d = c.to_digit(10).unwrap();
+            if i % 2 == 1 {
+                let doubled = d * 2;
+                if doubled > 9 {
+                    doubled - 9
+                } else {
+                    doubled
+                }
+            } else {
+                d
+            }
+        })
+        .sum();
+    sum.is_multiple_of(10)
+}
+
+#[tokio::test]
+#[file_serial]
+async fn register_assigns_account_number() {
+    let app = TestApp::new().await;
+    app.clear_cookie();
+
+    let (status, body) = app
+        .post("/register", register_body("funmi@example.com"))
+        .await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    let number = body["accountNumber"]
+        .as_str()
+        .expect("accountNumber present");
+    assert_eq!(number.len(), 10, "{number}");
+    assert!(number.chars().all(|c| c.is_ascii_digit()), "{number}");
+    assert!(!number.starts_with('0'), "{number}");
+    assert!(luhn_valid(number), "check digit wrong: {number}");
+
+    // The same number comes back on the session and after logging in again.
+    let (_, session) = app.get("/session").await;
+    assert_eq!(session["accountNumber"], number);
+
+    app.clear_cookie();
+    let (status, login) = app
+        .post(
+            "/login",
+            json!({ "email": "funmi@example.com", "password": "correcthorsebattery" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(login["accountNumber"], number);
+}
+
+#[tokio::test]
+#[file_serial]
+async fn each_customer_gets_a_different_account_number() {
+    let app = TestApp::new().await;
+
+    let mut numbers = std::collections::HashSet::new();
+    for i in 0..5 {
+        app.clear_cookie();
+        let (status, body) = app
+            .post("/register", register_body(&format!("user{i}@example.com")))
+            .await;
+        assert_eq!(status, StatusCode::CREATED);
+        numbers.insert(body["accountNumber"].as_str().unwrap().to_string());
+    }
+    assert_eq!(numbers.len(), 5);
+}

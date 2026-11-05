@@ -21,6 +21,8 @@ pub struct Session {
     pub display_name: String,
     pub operator_permissions: Vec<String>,
     pub customer_id: Uuid,
+    /// The customer's 10-digit Kimana account number.
+    pub account_number: String,
 }
 
 impl Session {
@@ -36,6 +38,7 @@ struct SessionRow {
     display_name: String,
     operator_permissions: Vec<String>,
     customer_id: Uuid,
+    account_number: String,
 }
 
 impl FromRequestParts<AppState> for Session {
@@ -58,7 +61,7 @@ impl FromRequestParts<AppState> for Session {
 
         let row: Option<SessionRow> = sqlx::query_as(
             "select u.id as user_id, u.role, u.display_name,
-                    u.operator_permissions, c.id as customer_id
+                    u.operator_permissions, c.id as customer_id, c.account_number
                from sessions s
                join users u on u.id = s.user_id
                join customers c on c.primary_user_id = u.id
@@ -78,6 +81,7 @@ impl FromRequestParts<AppState> for Session {
             display_name: row.display_name,
             operator_permissions: row.operator_permissions,
             customer_id: row.customer_id,
+            account_number: row.account_number,
         })
     }
 }

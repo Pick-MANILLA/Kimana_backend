@@ -45,6 +45,7 @@ fn to_response(session: crate::http::Session) -> SessionResponse {
         user_id: session.user_id.to_string(),
         role: session.role,
         display_name: session.display_name,
+        account_number: session.account_number,
         operator_permissions: (!session.operator_permissions.is_empty())
             .then_some(session.operator_permissions),
     }

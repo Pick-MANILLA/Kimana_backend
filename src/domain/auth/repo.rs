@@ -45,14 +45,18 @@ pub async fn insert_customer(
     id: Uuid,
     legal_name: &str,
     primary_user_id: Uuid,
-) -> ApiResult<()> {
-    sqlx::query("insert into customers (id, legal_name, primary_user_id) values ($1, $2, $3)")
-        .bind(id)
-        .bind(legal_name)
-        .bind(primary_user_id)
-        .execute(conn)
-        .await?;
-    Ok(())
+) -> ApiResult<String> {
+    // account_number comes from the column default (migration 013).
+    let account_number = sqlx::query_scalar(
+        "insert into customers (id, legal_name, primary_user_id) values ($1, $2, $3)
+         returning account_number",
+    )
+    .bind(id)
+    .bind(legal_name)
+    .bind(primary_user_id)
+    .fetch_one(conn)
+    .await?;
+    Ok(account_number)
 }
 
 pub async fn insert_draft_application(
@@ -76,6 +80,7 @@ pub struct SessionContextRow {
     pub display_name: String,
     pub operator_permissions: Vec<String>,
     pub customer_id: Uuid,
+    pub account_number: String,
 }
 
 /// The same `users join customers` lookup the `Session` extractor performs,
@@ -85,7 +90,8 @@ pub async fn find_session_context(
     user_id: Uuid,
 ) -> ApiResult<Option<SessionContextRow>> {
     let row = sqlx::query_as(
-        "select u.role, u.display_name, u.operator_permissions, c.id as customer_id
+        "select u.role, u.display_name, u.operator_permissions, c.id as customer_id,
+                c.account_number
            from users u
            join customers c on c.primary_user_id = u.id
           where u.id = $1",

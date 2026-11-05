@@ -56,7 +56,8 @@ pub async fn register(state: &AppState, input: RegisterInput) -> ApiResult<Authe
         &password_hash,
     )
     .await?;
-    repo::insert_customer(&mut tx, customer_id, &input.legal_name, user_id).await?;
+    let account_number =
+        repo::insert_customer(&mut tx, customer_id, &input.legal_name, user_id).await?;
     repo::insert_draft_application(&mut tx, application_id, customer_id).await?;
 
     write_audit(
@@ -72,6 +73,7 @@ pub async fn register(state: &AppState, input: RegisterInput) -> ApiResult<Authe
                 "email": input.email,
                 "displayName": input.display_name,
                 "legalName": input.legal_name,
+                "accountNumber": account_number,
             })),
         },
     )
@@ -97,6 +99,7 @@ pub async fn register(state: &AppState, input: RegisterInput) -> ApiResult<Authe
             display_name: input.display_name,
             operator_permissions: Vec::new(),
             customer_id,
+            account_number,
         },
         raw_token,
     })
@@ -138,6 +141,7 @@ pub async fn login(state: &AppState, email: &str, password: &str) -> ApiResult<A
             display_name: ctx.display_name,
             operator_permissions: ctx.operator_permissions,
             customer_id: ctx.customer_id,
+            account_number: ctx.account_number,
         },
         raw_token,
     })
