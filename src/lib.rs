@@ -242,6 +242,7 @@ pub fn build_app(state: AppState) -> Router {
         .allow_headers([
             HeaderName::from_static("content-type"),
             HeaderName::from_static("idempotency-key"),
+            HeaderName::from_static("authorization"),
         ])
         .expose_headers([REQUEST_ID_HEADER])
         .allow_credentials(true);
