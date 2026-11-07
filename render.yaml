@@ -1,0 +1,40 @@
+# Render Blueprint for kimana-backend.
+# https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: kimana-backend
+    runtime: rust
+    branch: main
+    buildCommand: cargo build --release
+    # Run the compiled binary directly. `cargo run` re-checks the build on
+    # every boot and delays port binding, which slows cold starts.
+    startCommand: ./target/release/kimana-backend
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      # PORT is injected by Render; HOST (0.0.0.0) and COOKIE_SECURE (true)
+      # already default to production-safe values in src/config.rs.
+      # Secrets / environment-specific values: set in the Render dashboard.
+      # `sync: false` keeps them out of the repo and never overwrites them.
+      - key: DATABASE_URL
+        sync: false
+      - key: CORS_ORIGIN
+        sync: false
+      - key: BRIDGE_API_KEY
+        sync: false
+      - key: BRIDGE_WEBHOOK_PUBLIC_KEY
+        sync: false
+      - key: BRIDGE_DESTINATION_ADDRESS
+        sync: false
+      - key: YELLOWCARD_API_KEY
+        sync: false
+      - key: YELLOWCARD_API_SECRET
+        sync: false
+      - key: YELLOWCARD_CHANNEL_ID
+        sync: false
+      - key: YELLOWCARD_SOURCE_ACCOUNT
+        sync: false
+      - key: SETTLEMENT_RPC_URL
+        sync: false
+      - key: SETTLEMENT_VAULT_ADDRESS
+        sync: false
